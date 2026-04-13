@@ -1,0 +1,23 @@
+{
+  "name": "voicebite",
+  "version": "1.0.0",
+  "description": "Log food from natural language text to structured daily JSON files with full macro and micro nutrient data",
+  "main": "src/cli.ts",
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "server": "tsx src/server.ts",
+    "dev:cli": "tsx watch src/cli.ts",
+    "dev:server": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "tsx": "^4.15.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5"
+  }
+}
