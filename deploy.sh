@@ -28,9 +28,15 @@ rsync -avz --delete \
   src/ \
   ${SSH_TARGET}:${PI_DIR}/src/
 
+# Build list of files to sync - only include files that actually exist on this machine
+SYNC_FILES="package.json package-lock.json tsconfig.json"
+[ -f ecosystem.config.cjs ] && SYNC_FILES="$SYNC_FILES ecosystem.config.cjs"
+[ -f .env.example ] && SYNC_FILES="$SYNC_FILES .env.example"
+[ -f .env ] && SYNC_FILES="$SYNC_FILES .env"
+
 rsync -avz \
   -e "ssh ${SSH_OPTS}" \
-  package.json package-lock.json tsconfig.json .env.example .env \
+  $SYNC_FILES \
   ${SSH_TARGET}:${PI_DIR}/
 
 # --- Step 3: Install dependencies and restart ---
