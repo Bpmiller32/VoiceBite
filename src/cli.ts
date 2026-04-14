@@ -88,7 +88,10 @@ function printPreviewTable(entries: FoodEntry[]): void {
       ? entry.food_name.slice(0, w.name - 5) + "..."
       : entry.food_name;
 
-    const source = entry.source === "gpt_estimate" ? "⚠ Claude est." : "USDA";
+    // Show the source label - water gets a special label since it always has 0 calories
+    const source = entry.source === "gpt_estimate" ? "⚠ Claude est."
+                 : entry.source === "water"         ? "💧 Water"
+                 : "USDA";
 
     console.log(
       "  " + num +

@@ -65,10 +65,13 @@ export interface FoodEntry {
   fdc_description: string | null;
   // How the serving was described (e.g. "2 large eggs", "1 bowl", "6 oz")
   serving_description: string;
-  // Where the nutrient data came from - "usda" is from the database, "gpt_estimate" is approximated
-  source: "usda" | "gpt_estimate";
-  // Full nutrient profile for this serving
+  // Where the nutrient data came from
+  // "usda" = matched to USDA FoodData Central, "gpt_estimate" = Claude estimated, "water" = plain water bypass
+  source: "usda" | "gpt_estimate" | "water";
+  // Full nutrient profile for this serving (all zeros for water)
   nutrients: Nutrients;
+  // Volume of water in milliliters - only set when source is "water", used for hydration insights
+  water_ml?: number;
 }
 
 // The full contents of one daily food log file (e.g. data/users/billy/food/2026-04-12.json)

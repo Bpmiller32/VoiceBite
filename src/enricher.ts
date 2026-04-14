@@ -225,9 +225,59 @@ Respond with ONLY this JSON object, no other text. All values must be numbers (u
   return { ...emptyNutrients(), ...JSON.parse(jsonMatch[0]) };
 }
 
+// Detect if a parsed food item is plain water (should bypass USDA + Claude entirely)
+// We match on "water" in the name but exclude caloric water-based drinks
+function isPlainWater(food: ParsedFood): boolean {
+  const name = food.name.toLowerCase();
+  // Must contain "water"
+  if (!name.includes("water")) return false;
+  // These are caloric - do NOT treat as plain water
+  if (name.includes("coconut water")) return false;
+  if (name.includes("vitamin water")) return false;
+  if (name.includes("flavored water")) return false;
+  if (name.includes("juice")) return false;
+  // Everything else with "water" (tap water, sparkling water, mineral water, drinking water) = zero cal
+  return true;
+}
+
+// Convert a water quantity + unit into milliliters
+// Parser is instructed to use ml, but this handles other units as fallback
+function toMilliliters(quantity: number, unit: string): number {
+  const u = unit.toLowerCase();
+  if (u === "ml" || u.includes("milliliter")) return Math.round(quantity);
+  if (u === "l" || u.includes("liter") && !u.includes("fl")) return Math.round(quantity * 1000);
+  if (u.includes("fl oz") || u.includes("fluid oz")) return Math.round(quantity * 29.574);
+  if (u.includes("oz") && !u.includes("fl")) return Math.round(quantity * 29.574); // assume fluid oz for water
+  if (u.includes("cup")) return Math.round(quantity * 236.588);
+  if (u.includes("tbsp") || u.includes("tablespoon")) return Math.round(quantity * 14.787);
+  // Unknown unit - just return the quantity as-is and log a warning
+  console.log(`  ⚠ Unknown water unit "${unit}", storing quantity as-is`);
+  return Math.round(quantity);
+}
+
 // Enrich a single food item - exported so the CLI can call it for individual re-picks
 // Returns the final entry and the raw USDA candidates (for interactive re-selection)
 export async function enrichOneFood(food: ParsedFood): Promise<EnrichedResult> {
+  // Water special case: bypass USDA search and Claude entirely
+  // Water is always 0 calories - we just track the volume in ml for hydration insights
+  if (isPlainWater(food)) {
+    const waterMl = toMilliliters(food.quantity, food.unit);
+    console.log(`  💧 "${food.name}" → water (${waterMl}ml)`);
+    return {
+      entry: {
+        id: crypto.randomUUID(),
+        food_name: `water (${waterMl}ml)`,
+        fdc_id: null,
+        fdc_description: null,
+        serving_description: `${food.quantity} ${food.unit}`,
+        source: "water",
+        water_ml: waterMl,
+        nutrients: emptyNutrients(),   // water has zero nutrients
+      },
+      candidates: [],  // no USDA candidates needed
+    };
+  }
+
   // Step 1: Get top 5 USDA candidates
   const candidates = await searchFDC(food.name);
 

@@ -25,6 +25,7 @@ Rules:
 - Be specific with units: use "large egg", "oz", "cup", "slice", "tbsp", "fl oz", "medium", "serving", etc.
 - For restaurant items where quantity is unclear, use quantity: 1 and unit: "serving"
 - For drinks, use "fl oz" when possible (e.g. a standard glass of wine = 5 fl oz)
+- For WATER specifically: always use "ml" as the unit, converting as needed (1 L = 1000 ml, 1 cup = 237 ml, 1 fl oz = 30 ml)
 - Do not include water unless explicitly mentioned
 - Preserve brand/restaurant names in the item name (e.g. "Chipotle chicken al-pastor burrito bowl")
 
