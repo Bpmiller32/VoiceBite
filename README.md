@@ -16,17 +16,16 @@ Built to run 24/7 on a Raspberry Pi and triggered from an iPhone Shortcut via Ta
                             Claude (NLP parsing)
                    [{name: "iced latte", qty: 16, unit: "fl oz"}, ...]
                                     ↓
-                      USDA FoodData Central (nutrition lookup)
-                   Claude evaluates top 5 matches, picks best, scales to serving
-                   Restaurant items → Claude estimates directly
+                      Claude (nutrition estimation)
+                   Estimates full nutrient profile for each food item
                                     ↓
                          Interactive preview table
-                   Flag any wrong entries → see alternatives → fix
+                   Flag any wrong entries → re-estimate → fix
                                     ↓
                      data/users/billy/food/2026-04-12.json
 ```
 
-Every entry gets ~30 nutrients: full macros, all vitamins (A, B1–B12, C, D, E, K), all minerals (iron, magnesium, zinc, selenium...). Foods matched to USDA get a stable `fdc_id` for consistent tracking across days. Restaurant/branded items that don't match get flagged as `gpt_estimate`.
+Every entry gets ~30 nutrients: full macros, all vitamins (A, B1–B12, C, D, E, K), all minerals (iron, magnesium, zinc, selenium...). All entries are Claude estimates — works great for generic foods, restaurant items, and branded products alike.
 
 ---
 
@@ -36,8 +35,8 @@ Every entry gets ~30 nutrients: full macros, all vitamins (A, B1–B12, C, D, E,
 voicebite/
 ├── src/
 │   ├── types.ts        # All shared TypeScript types — the data contract for the whole app
-│   ├── parser.ts       # Claude: raw text → [{name, quantity, unit}]
-│   ├── enricher.ts     # USDA FDC search + Claude smart matching → full nutrient profiles
+│   ├── enricher.ts     # Claude: raw text → parsed foods + full nutrient profiles (single API call)
+│   ├── logger.ts       # Structured logging with pino (JSON to file + stdout)
 │   ├── store.ts        # Read/write daily JSON log files to disk
 │   ├── sessions.ts     # In-memory pending sessions (parse → preview → confirm flow)
 │   ├── server.ts       # Express HTTP server for remote use (iPhone Shortcut, etc.)
@@ -47,7 +46,7 @@ voicebite/
 └── .env.example          # Config template
 ```
 
-**Stack:** TypeScript + Node.js, Claude (Anthropic), USDA FoodData Central API, Express
+**Stack:** TypeScript + Node.js, Claude (Anthropic), Express
 
 **Dependencies:** `@anthropic-ai/sdk`, `express`, `dotenv`, `tsx` — nothing else.
 
@@ -64,8 +63,7 @@ One JSON file per day per user:
   "entries": [
     {
       "food_name": "scrambled eggs (2 large egg)",
-      "fdc_id": 748967,
-      "source": "usda",
+      "source": "claude_estimate",
       "nutrients": {
         "calories": 204, "protein_g": 14.2, "fat_g": 15.1, "carbs_g": 2.3,
         "vitamin_b12_mcg": 1.1, "iron_mg": 1.9, "calcium_mg": 56, "..."
@@ -82,14 +80,13 @@ Files live at `data/users/{userId}/food/YYYY-MM-DD.json`. Plain JSON, human-read
 
 ## Setup
 
-You need two API keys:
+You need one API key:
 - **Anthropic** → [console.anthropic.com](https://console.anthropic.com)
-- **USDA FoodData Central** → [api.data.gov/signup](https://api.data.gov/signup) *(free, instant)*
 
 ```bash
 git clone <repo> && cd voicebite
 npm install
-cp .env.example .env   # fill in your keys
+cp .env.example .env   # fill in your key
 ```
 
 ### CLI
@@ -125,6 +122,6 @@ Set up an iPhone Shortcut: **Dictate Text → POST /log → show summary → POS
 
 ## Why This Exists
 
-Calorie tracking has one fatal flaw: friction. Searching for each food, picking the right entry, entering the serving size — it's tedious enough that most people quit. 
+Calorie tracking has one fatal flaw: friction. Searching for each food, picking the right entry, entering the serving size — it's tedious enough that most people quit.
 
 The idea here is that most people *can* easily remember everything they ate in a day. VoiceBite turns that into a complete, micronutrient-rich log with one dictation. The longer-term goal is building a personal health insights layer — correlating food intake with mood, sleep, and energy over time — which is why every entry captures the full nutrient profile rather than just calories.

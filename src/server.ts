@@ -11,16 +11,32 @@
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import express from "express";
-import { parseFood } from "./parser";
-import { enrichFoods } from "./enricher";
+import { initLogger } from "./logger";
+import { parseAndEnrich } from "./enricher";
 import { appendEntries, readDayLog, todayDateString } from "./store";
 import { createSession, getSession, deleteSession, purgeExpiredSessions } from "./sessions";
 import { FoodEntry, LogPreviewResponse, ConfirmResponse } from "./types";
+
+// Initialize the logger in server mode (JSON to file + stdout)
+const logger = initLogger("server");
 
 const app = express();
 
 // Parse incoming JSON request bodies
 app.use(express.json());
+
+// Request ID middleware - generates a unique ID per request for log correlation
+app.use((req, res, next) => {
+  const requestId = crypto.randomUUID();
+  (req as any).requestId = requestId;
+  (req as any).log = logger.child({ requestId, method: req.method, path: req.url });
+  (req as any).log.info("request received");
+  const startMs = Date.now();
+  res.on("finish", () => {
+    (req as any).log.info({ statusCode: res.statusCode, latencyMs: Date.now() - startMs }, "request completed");
+  });
+  next();
+});
 
 // The default user to fall back to if no userId is provided in the request
 const DEFAULT_USER = process.env.DEFAULT_USER || "default";
@@ -34,10 +50,12 @@ setInterval(purgeExpiredSessions, 5 * 60 * 1000);
 // Nothing is written to disk yet - the client must call /confirm/:sessionId to save
 // If overwrite is true, existing entries for that day will be replaced (default: append)
 app.post("/log", async (req, res) => {
+  const reqLog = (req as any).log;
   const { text, userId, date, overwrite } = req.body;
 
   // Make sure we got some food text to work with
   if (!text || typeof text !== "string" || text.trim().length === 0) {
+    reqLog.warn("empty text field in request body");
     res.status(400).json({ error: "Request body must include a non-empty 'text' field" });
     return;
   }
@@ -46,26 +64,18 @@ app.post("/log", async (req, res) => {
   const logDate = date || todayDateString();
 
   try {
-    console.log(`[${user}] Parsing food text for ${logDate}...`);
+    reqLog.info({ userId: user, date: logDate }, "parsing and estimating nutrition");
 
-    // Step 1: Use Claude to break the free-form text into individual food items
-    const parsedFoods = await parseFood(text);
-    console.log(`[${user}] Parsed ${parsedFoods.length} food items`);
-
-    // Step 2: Look up each food in USDA FDC (Claude picks best match, falls back to Claude estimate)
-    const enriched = await enrichFoods(parsedFoods);
-
-    // Pull out just the FoodEntry objects - the server doesn't need the USDA candidates
-    const entries: FoodEntry[] = enriched.map(r => r.entry);
-    console.log(`[${user}] Enriched ${entries.length} entries`);
+    // Single Claude call: parse the text AND estimate nutrients together
+    const { entries } = await parseAndEnrich(text, reqLog);
+    reqLog.info({ userId: user, entryCount: entries.length }, "parsed and enriched entries");
 
     // Check if there's already a log for this day - include that info in the response
     const existingLog = readDayLog(user, logDate);
     const existingCount = existingLog ? existingLog.entries.length : 0;
     const existingCalories = existingLog ? Math.round(existingLog.daily_totals.calories) : 0;
 
-    // Step 3: Store the entries in a pending session - not saved to disk yet
-    // We also store the overwrite flag so /confirm knows what to do
+    // Store the entries in a pending session - not saved to disk yet
     const sessionId = createSession(user, logDate, entries);
 
     // Build the summary totals for the preview
@@ -85,14 +95,14 @@ app.post("/log", async (req, res) => {
         totalFat_g: Math.round(totalFat * 10) / 10,
         totalCarbs_g: Math.round(totalCarbs * 10) / 10,
       },
-      // Let the client know if there's already data for this day so it can warn the user
       existingEntries: existingCount,
       existingCalories: existingCalories,
     };
 
+    reqLog.info({ sessionId, totalCalories: Math.round(totalCalories) }, "preview ready");
     res.json(preview);
   } catch (err: any) {
-    console.error(`[${user}] Error processing log:`, err.message);
+    reqLog.error({ err: err.message, stack: err.stack }, "error processing log");
     res.status(500).json({ error: err.message });
   }
 });
@@ -102,6 +112,7 @@ app.post("/log", async (req, res) => {
 // Confirms a pending session and writes the food log JSON file to disk
 // overwrite: true = replace the whole day, false (default) = append to existing entries
 app.post("/confirm/:sessionId", async (req, res) => {
+  const reqLog = (req as any).log;
   const { sessionId } = req.params;
   const { userId, overwrite } = req.body;
   const user = userId || DEFAULT_USER;
@@ -110,12 +121,14 @@ app.post("/confirm/:sessionId", async (req, res) => {
   const session = getSession(sessionId);
 
   if (!session) {
+    reqLog.warn({ sessionId }, "session not found or expired");
     res.status(404).json({ error: "Session not found or expired. Please re-submit your food log." });
     return;
   }
 
   // Make sure this session belongs to the right user
   if (session.userId !== user) {
+    reqLog.warn({ sessionId, sessionUser: session.userId, requestUser: user }, "session user mismatch");
     res.status(403).json({ error: "This session belongs to a different user" });
     return;
   }
@@ -155,10 +168,10 @@ app.post("/confirm/:sessionId", async (req, res) => {
       filePath,
     };
 
-    console.log(`[${user}] ${result.message}`);
+    reqLog.info({ sessionId, userId: user, filePath, totalEntries, totalCalories }, "session confirmed and saved");
     res.json(result);
   } catch (err: any) {
-    console.error(`[${user}] Error saving log:`, err.message);
+    reqLog.error({ err: err.message, stack: err.stack, sessionId }, "error saving log");
     res.status(500).json({ error: err.message });
   }
 });
@@ -167,21 +180,27 @@ app.post("/confirm/:sessionId", async (req, res) => {
 // Returns the saved food log for a specific user and date
 // Useful for building a UI or checking what was logged
 app.get("/log/:userId/:date", (req, res) => {
+  const reqLog = (req as any).log;
   const { userId, date } = req.params;
   const log = readDayLog(userId, date);
 
   if (!log) {
+    reqLog.info({ userId, date }, "day log not found");
     res.status(404).json({ error: `No log found for user '${userId}' on ${date}` });
     return;
   }
 
+  reqLog.info({ userId, date, entryCount: log.entries.length }, "day log retrieved");
   res.json(log);
 });
 
 // Start the server
 const PORT = parseInt(process.env.PORT || "3000");
 app.listen(PORT, () => {
-  console.log(`VoiceBite server running on port ${PORT}`);
-  console.log(`Default user: ${DEFAULT_USER}`);
-  console.log(`Data directory: ${process.env.DATA_DIR || "./data"}`);
+  logger.info({
+    port: PORT,
+    defaultUser: DEFAULT_USER,
+    dataDir: process.env.DATA_DIR || "./data",
+    logDir: process.env.LOG_DIR || "./logs",
+  }, "VoiceBite server started");
 });

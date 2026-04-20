@@ -1,10 +1,10 @@
 // All shared TypeScript types used across the app
 // If you need to understand what data looks like at any point in the pipeline, look here
 
-// One food item as parsed from the user's raw text by GPT
+// One food item as parsed from the user's raw text by Claude
 // This is the "before enrichment" state - just what the user described
 export interface ParsedFood {
-  // Human-friendly name GPT extracted from the text (e.g. "scrambled eggs")
+  // Human-friendly name Claude extracted from the text (e.g. "scrambled eggs")
   name: string;
   // How much of it (e.g. 2, 0.5, 1)
   quantity: number;
@@ -12,7 +12,7 @@ export interface ParsedFood {
   unit: string;
 }
 
-// Full nutrient profile for one food item, after looking it up in the USDA database
+// Full nutrient profile for one food item
 // All values are per the serving described in the ParsedFood that produced this
 export interface Nutrients {
   // Macros
@@ -57,17 +57,13 @@ export interface Nutrients {
 export interface FoodEntry {
   // Unique ID for this entry (so you can delete/edit individual items later)
   id: string;
-  // The human name as GPT understood it (e.g. "Scrambled eggs (2 large)")
+  // The human name as Claude understood it (e.g. "Scrambled eggs (2 large)")
   food_name: string;
-  // The USDA FDC food ID - null if this was a GPT estimate (restaurant food, etc.)
-  fdc_id: number | null;
-  // The exact description from the USDA database (e.g. "Egg, whole, cooked, scrambled")
-  fdc_description: string | null;
   // How the serving was described (e.g. "2 large eggs", "1 bowl", "6 oz")
   serving_description: string;
   // Where the nutrient data came from
-  // "usda" = matched to USDA FoodData Central, "gpt_estimate" = Claude estimated, "water" = plain water bypass
-  source: "usda" | "gpt_estimate" | "water";
+  // "claude_estimate" = Claude estimated, "water" = plain water bypass
+  source: "claude_estimate" | "water";
   // Full nutrient profile for this serving (all zeros for water)
   nutrients: Nutrients;
   // Volume of water in milliliters - only set when source is "water", used for hydration insights
@@ -116,28 +112,6 @@ export interface LogPreviewResponse {
     totalFat_g: number;
     totalCarbs_g: number;
   };
-}
-
-// A single candidate result from a USDA FDC food search
-// We fetch the top 5 of these and have Claude pick the best match
-export interface FDCCandidate {
-  // USDA's unique ID for this food - stable across queries
-  fdcId: number;
-  // The full description from USDA (e.g. "Egg, whole, cooked, scrambled")
-  description: string;
-  // What kind of USDA data this is - "Branded" has serving sizes, others are per 100g
-  dataType: string;
-  // Nutrients for this food (per 100g for generic, per serving for branded)
-  nutrients: Nutrients;
-}
-
-// What enrichFoods returns for each food item
-// Includes the final entry AND the raw USDA candidates so the CLI can show alternatives
-export interface EnrichedResult {
-  // The ready-to-save food entry
-  entry: FoodEntry;
-  // The top USDA candidates that were considered (used by CLI for interactive re-pick)
-  candidates: FDCCandidate[];
 }
 
 // What the HTTP server sends back after POST /confirm/:sessionId

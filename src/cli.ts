@@ -14,11 +14,13 @@ import dotenv from "dotenv";
 dotenv.config({ override: true });
 import fs from "fs";
 import readline from "readline";
-import { parseFood } from "./parser";
-import { enrichFoods, scaleNutrients, estimateWithClaude } from "./enricher";
-import { sumNutrients } from "./enricher";
+import { initLogger } from "./logger";
+import { parseAndEnrich, estimateWithClaude, sumNutrients } from "./enricher";
 import { appendEntries, readDayLog, writeDayLog, todayDateString } from "./store";
-import { FoodEntry, EnrichedResult, ParsedFood, DayLog } from "./types";
+import { FoodEntry, ParsedFood, DayLog } from "./types";
+
+// Initialize the logger in CLI mode (file only - stdout stays clean for interactive UI)
+const logger = initLogger("cli");
 
 // Parse the command line arguments into a simple object
 // We're doing this manually instead of using a library - the CLI is simple enough
@@ -89,9 +91,7 @@ function printPreviewTable(entries: FoodEntry[]): void {
       : entry.food_name;
 
     // Show the source label - water gets a special label since it always has 0 calories
-    const source = entry.source === "gpt_estimate" ? "⚠ Claude est."
-                 : entry.source === "water"         ? "💧 Water"
-                 : "USDA";
+    const source = entry.source === "water" ? "💧 Water" : "Claude est.";
 
     console.log(
       "  " + num +
@@ -125,81 +125,98 @@ function printPreviewTable(entries: FoodEntry[]): void {
 }
 
 // Interactive re-pick flow for a single entry
-// Shows the user the USDA candidates and a Claude estimate option, lets them pick
-// Returns the updated FoodEntry (or the same one if user kept current)
+// Lets the user correct the food description, adjust the serving, or re-roll the estimate
+// Returns the updated FoodEntry and (possibly modified) ParsedFood
 async function repickEntry(
   itemNumber: number,
   parsedFood: ParsedFood,
-  result: EnrichedResult
-): Promise<FoodEntry> {
-  console.log(`\nAlternatives for item #${itemNumber}: ${result.entry.food_name}`);
+  currentEntry: FoodEntry
+): Promise<{ entry: FoodEntry; parsedFood: ParsedFood }> {
+  console.log(`\nFix item #${itemNumber}: ${currentEntry.food_name}`);
   console.log("─".repeat(70));
-
-  // Show the USDA candidates we found earlier
-  if (result.candidates.length === 0) {
-    console.log("  (No USDA candidates found for this food)");
-  } else {
-    result.candidates.forEach((c, i) => {
-      // Show a brief calorie hint so the user can judge the match
-      const calHint = c.nutrients.calories > 0 ? ` — ${c.nutrients.calories} cal/100g` : "";
-      console.log(`  [${i + 1}] ${c.description} (${c.dataType}, FDC ${c.fdcId}${calHint})`);
-    });
-  }
-
-  // Always offer a fresh Claude estimate option
-  console.log(`  [${result.candidates.length + 1}] Get a fresh Claude estimate for this item`);
+  console.log(`  Current: ${Math.round(currentEntry.nutrients.calories)} cal | ${currentEntry.nutrients.protein_g}g P | ${currentEntry.nutrients.fat_g}g F | ${currentEntry.nutrients.carbs_g}g C`);
+  console.log(`  [1] Edit food description (e.g. "chicken burrito bowl with guac and rice")`);
+  console.log(`  [2] Change serving size (currently: ${parsedFood.quantity} ${parsedFood.unit})`);
+  console.log(`  [3] Re-estimate with same description`);
   console.log(`  [0] Keep current entry`);
 
-  const pickStr = await promptLine(`\nChoose (0-${result.candidates.length + 1}): `);
+  const pickStr = await promptLine(`\nChoose (0-3): `);
   const pickNum = parseInt(pickStr.trim());
 
-  // User pressed Enter or typed 0 → keep the current entry
-  if (isNaN(pickNum) || pickNum === 0) {
-    console.log("  Keeping current entry.");
-    return result.entry;
-  }
-
-  // User picked a specific USDA candidate
-  if (pickNum >= 1 && pickNum <= result.candidates.length) {
-    const chosen = result.candidates[pickNum - 1];
-    // Ask for serving weight so we can scale the per-100g USDA data correctly
-    const gramsStr = await promptLine(
-      `  Estimated serving weight in grams for "${parsedFood.quantity} ${parsedFood.unit}" (press Enter for 100g): `
-    );
-    const grams = parseInt(gramsStr.trim()) || 100;
-
-    // Scale the USDA per-100g nutrients to this serving weight
-    const scaled = scaleNutrients(chosen.nutrients, grams / 100);
-
-    console.log(`  ✓ Updated to: ${chosen.description} (${grams}g serving, ${Math.round(scaled.calories)} cal)`);
-    return {
-      ...result.entry,
-      id: crypto.randomUUID(), // New ID for the updated entry
-      fdc_id: chosen.fdcId,
-      fdc_description: chosen.description,
-      source: "usda",
-      nutrients: scaled,
-    };
-  }
-
-  // User chose the Claude estimate option
-  if (pickNum === result.candidates.length + 1) {
+  // Edit the food description and re-estimate
+  if (pickNum === 1) {
+    const newName = await promptLine(`  New food description: `);
+    if (!newName.trim()) {
+      console.log("  No change, keeping current entry.");
+      return { entry: currentEntry, parsedFood };
+    }
+    const updatedFood: ParsedFood = { ...parsedFood, name: newName.trim() };
     console.log("  Getting Claude estimate...");
-    const nutrients = await estimateWithClaude(parsedFood);
-    console.log(`  ✓ Claude estimate: ${Math.round(nutrients.calories)} cal`);
+    logger.info({ action: "repick_edit", itemNumber, oldName: parsedFood.name, newName: updatedFood.name }, "repick: editing food description");
+    const nutrients = await estimateWithClaude(updatedFood);
+    console.log(`  ✓ ${Math.round(nutrients.calories)} cal`);
     return {
-      ...result.entry,
-      id: crypto.randomUUID(),
-      fdc_id: null,
-      fdc_description: null,
-      source: "gpt_estimate",
-      nutrients,
+      entry: {
+        ...currentEntry,
+        id: crypto.randomUUID(),
+        food_name: `${updatedFood.name} (${updatedFood.quantity} ${updatedFood.unit})`,
+        source: "claude_estimate",
+        nutrients,
+      },
+      parsedFood: updatedFood,
     };
   }
 
-  // Invalid input - keep current
-  console.log("  Invalid choice, keeping current entry.");
-  return result.entry;
+  // Change the serving size and re-estimate
+  if (pickNum === 2) {
+    const newQtyStr = await promptLine(`  New quantity (currently ${parsedFood.quantity}): `);
+    const newUnit = await promptLine(`  New unit (currently "${parsedFood.unit}", press Enter to keep): `);
+    const newQty = parseFloat(newQtyStr.trim());
+    if (isNaN(newQty) || newQty <= 0) {
+      console.log("  Invalid quantity, keeping current entry.");
+      return { entry: currentEntry, parsedFood };
+    }
+    const updatedFood: ParsedFood = {
+      ...parsedFood,
+      quantity: newQty,
+      unit: newUnit.trim() || parsedFood.unit,
+    };
+    console.log("  Getting Claude estimate...");
+    logger.info({ action: "repick_serving", itemNumber, food: parsedFood.name, oldQty: parsedFood.quantity, oldUnit: parsedFood.unit, newQty, newUnit: updatedFood.unit }, "repick: changing serving size");
+    const nutrients = await estimateWithClaude(updatedFood);
+    console.log(`  ✓ ${Math.round(nutrients.calories)} cal`);
+    return {
+      entry: {
+        ...currentEntry,
+        id: crypto.randomUUID(),
+        food_name: `${updatedFood.name} (${updatedFood.quantity} ${updatedFood.unit})`,
+        serving_description: `${updatedFood.quantity} ${updatedFood.unit}`,
+        source: "claude_estimate",
+        nutrients,
+      },
+      parsedFood: updatedFood,
+    };
+  }
+
+  // Re-roll: fresh estimate with the same description
+  if (pickNum === 3) {
+    console.log("  Getting fresh Claude estimate...");
+    logger.info({ action: "repick_reroll", itemNumber, food: parsedFood.name }, "repick: re-estimating");
+    const nutrients = await estimateWithClaude(parsedFood);
+    console.log(`  ✓ ${Math.round(nutrients.calories)} cal`);
+    return {
+      entry: {
+        ...currentEntry,
+        id: crypto.randomUUID(),
+        source: "claude_estimate",
+        nutrients,
+      },
+      parsedFood,
+    };
+  }
+
+  console.log("  Keeping current entry.");
+  return { entry: currentEntry, parsedFood };
 }
 
 // The main function - orchestrates the whole CLI flow
@@ -259,24 +276,24 @@ Flags:
   }
 
   console.log(`\nLogging food for ${args.user} on ${args.date}`);
-  console.log("Parsing food text with Claude...");
+  console.log("Parsing and estimating nutrition with Claude...");
 
-  // Step 1: Parse the free-form text into individual food items
-  const parsedFoods: ParsedFood[] = await parseFood(foodText);
-  console.log(`Found ${parsedFoods.length} food items. Looking up nutrition data...`);
+  logger.info({ user: args.user, date: args.date, inputLength: foodText.length, autoConfirm: args.yes }, "cli: starting food log");
 
-  // Step 2: Enrich each item (USDA FDC + Claude smart matching)
-  const results: EnrichedResult[] = await enrichFoods(parsedFoods);
+  // Step 1+2 combined: Parse the text AND estimate nutrients in a single Claude call
+  const result = await parseAndEnrich(foodText);
+  const parsedFoods = result.parsedFoods;
+  let entries: FoodEntry[] = result.entries;
+  console.log(`Found ${entries.length} food items.`);
 
-  // Extract just the FoodEntry objects for display
-  let entries: FoodEntry[] = results.map(r => r.entry);
+  logger.info({ entryCount: entries.length }, "cli: parsing complete");
 
   // Step 3: Show the preview table
   printPreviewTable(entries);
 
   // Step 4: Interactive review - skip if --yes was passed
   if (!args.yes) {
-    // Ask if any entries need to be replaced with different options
+    // Ask if any entries need to be re-estimated
     console.log("Items to fix? Enter item numbers separated by spaces (e.g. '2 3')");
     const repickInput = await promptLine("or press Enter to confirm all: ");
 
@@ -285,17 +302,22 @@ Flags:
       .trim()
       .split(/\s+/)
       .map(Number)
-      .filter(n => !isNaN(n) && n >= 1 && n <= results.length);
+      .filter(n => !isNaN(n) && n >= 1 && n <= entries.length);
 
-    // Walk through each requested re-pick and let the user choose an alternative
+    if (repickNums.length > 0) {
+      logger.info({ repickItems: repickNums }, "cli: user requested re-picks");
+    }
+
+    // Walk through each requested re-pick and let the user choose
     for (const num of repickNums) {
       const idx = num - 1;
-      results[idx].entry = await repickEntry(num, parsedFoods[idx], results[idx]);
+      const result = await repickEntry(num, parsedFoods[idx], entries[idx]);
+      entries[idx] = result.entry;
+      parsedFoods[idx] = result.parsedFood;
     }
 
     // If any entries were changed, show the updated table
     if (repickNums.length > 0) {
-      entries = results.map(r => r.entry);
       console.log("\nUpdated preview:");
       printPreviewTable(entries);
     }
@@ -304,12 +326,12 @@ Flags:
     const answer = await promptLine("Log these entries? [Y/n] ");
     if (answer.trim().toLowerCase() === "n") {
       console.log("Cancelled. Nothing was saved.");
+      logger.info("cli: user cancelled");
       process.exit(0);
     }
   }
 
   // Step 5: Save to the day log file
-  entries = results.map(r => r.entry);
   let filePath: string;
   let totalCalories: number;
   let totalEntryCount: number;
@@ -334,10 +356,13 @@ Flags:
   console.log(`  Day total (${args.date}): ${totalEntryCount} entries, ${totalCalories} kcal`);
   const totals = sumNutrients(entries);
   console.log(`  New entries: Protein ${totals.protein_g}g  |  Fat ${totals.fat_g}g  |  Carbs ${totals.carbs_g}g\n`);
+
+  logger.info({ filePath, totalEntries: totalEntryCount, totalCalories, overwrite }, "cli: entries saved");
 }
 
 // Run main and catch any unhandled errors
 main().catch(err => {
+  logger.error({ err: err.message, stack: err.stack }, "cli: unhandled error");
   console.error("\nError:", err.message);
   process.exit(1);
 });
