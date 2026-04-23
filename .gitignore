@@ -5,3 +5,4 @@ data/
 logs/
 *.db
 package-lock.json
+.DS_Store

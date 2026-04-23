@@ -3,24 +3,31 @@
 // Designed to run on your Raspberry Pi and be called from iPhone Shortcuts via Tailscale
 //
 // Endpoints:
-//   POST /log             - parse text, enrich with nutrients, return a preview for confirmation
-//   POST /confirm/:id     - confirm a pending session, write the JSON file to disk
-//   GET  /log/:userId/:date - read back a saved day log (useful for debugging or display)
+//   POST /log                          - parse text, enrich with nutrients, return a preview for confirmation
+//   POST /confirm/:id                  - confirm a pending session, write the JSON file to disk
+//   GET  /log/:userId/:date            - read back a saved day log
+//   GET  /log/:userId/dates            - list all dates that have logs
+//   DELETE /log/:userId/:date/:entryId - delete a single entry
+//   PUT    /log/:userId/:date/:entryId - update a single entry's nutrients/serving
 
 // Load .env file - override: true means .env always wins over shell env vars
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 import express from "express";
+import cors from "cors";
 import { initLogger } from "./logger";
-import { parseAndEnrich } from "./enricher";
-import { appendEntries, readDayLog, todayDateString } from "./store";
+import { parseAndEnrich, sumNutrients } from "./enricher";
+import { appendEntries, readDayLog, writeDayLog, listDates, todayDateString } from "./store";
 import { createSession, getSession, deleteSession, purgeExpiredSessions } from "./sessions";
-import { FoodEntry, LogPreviewResponse, ConfirmResponse } from "./types";
+import { FoodEntry, DayLog, LogPreviewResponse, ConfirmResponse } from "./types";
 
 // Initialize the logger in server mode (JSON to file + stdout)
 const logger = initLogger("server");
 
 const app = express();
+
+// Allow cross-origin requests (React dev server runs on a different port)
+app.use(cors());
 
 // Parse incoming JSON request bodies
 app.use(express.json());
@@ -140,9 +147,7 @@ app.post("/confirm/:sessionId", async (req, res) => {
 
     if (overwrite) {
       // Overwrite mode: ignore any existing entries, save only the new ones
-      const { sumNutrients } = require("./enricher");
-      const { writeDayLog } = require("./store");
-      const newLog = {
+      const newLog: DayLog = {
         date: session.date,
         userId: session.userId,
         entries: session.entries,
@@ -176,9 +181,26 @@ app.post("/confirm/:sessionId", async (req, res) => {
   }
 });
 
+// GET /log/:userId/dates
+// Returns a list of all dates that have food logs for a user
+// Useful for calendar views and history navigation
+// NOTE: must be registered before /:date to avoid "dates" matching the :date param
+app.get("/log/:userId/dates", (req, res) => {
+  const reqLog = (req as any).log;
+  const { userId } = req.params;
+
+  try {
+    const dates = listDates(userId);
+    reqLog.info({ userId, dateCount: dates.length }, "listed dates");
+    res.json({ userId, dates });
+  } catch (err: any) {
+    reqLog.error({ err: err.message, userId }, "error listing dates");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /log/:userId/:date
 // Returns the saved food log for a specific user and date
-// Useful for building a UI or checking what was logged
 app.get("/log/:userId/:date", (req, res) => {
   const reqLog = (req as any).log;
   const { userId, date } = req.params;
@@ -192,6 +214,65 @@ app.get("/log/:userId/:date", (req, res) => {
 
   reqLog.info({ userId, date, entryCount: log.entries.length }, "day log retrieved");
   res.json(log);
+});
+
+// DELETE /log/:userId/:date/:entryId
+// Removes a single entry from a day log by its ID
+app.delete("/log/:userId/:date/:entryId", (req, res) => {
+  const reqLog = (req as any).log;
+  const { userId, date, entryId } = req.params;
+
+  const existing = readDayLog(userId, date);
+  if (!existing) {
+    res.status(404).json({ error: `No log found for user '${userId}' on ${date}` });
+    return;
+  }
+
+  const idx = existing.entries.findIndex(e => e.id === entryId);
+  if (idx === -1) {
+    res.status(404).json({ error: `Entry '${entryId}' not found in ${date} log` });
+    return;
+  }
+
+  const removed = existing.entries.splice(idx, 1)[0];
+  existing.daily_totals = sumNutrients(existing.entries);
+  writeDayLog(existing);
+
+  reqLog.info({ userId, date, entryId, food: removed.food_name }, "entry deleted");
+  res.json({ success: true, deleted: removed, log: existing });
+});
+
+// PUT /log/:userId/:date/:entryId
+// Updates a single entry's food_name, serving_description, and/or nutrients
+// Body: partial FoodEntry fields to merge (id, source are preserved)
+app.put("/log/:userId/:date/:entryId", (req, res) => {
+  const reqLog = (req as any).log;
+  const { userId, date, entryId } = req.params;
+
+  const existing = readDayLog(userId, date);
+  if (!existing) {
+    res.status(404).json({ error: `No log found for user '${userId}' on ${date}` });
+    return;
+  }
+
+  const idx = existing.entries.findIndex(e => e.id === entryId);
+  if (idx === -1) {
+    res.status(404).json({ error: `Entry '${entryId}' not found in ${date} log` });
+    return;
+  }
+
+  const update = req.body;
+  const entry = existing.entries[idx];
+
+  if (update.food_name) entry.food_name = update.food_name;
+  if (update.serving_description) entry.serving_description = update.serving_description;
+  if (update.nutrients) entry.nutrients = { ...entry.nutrients, ...update.nutrients };
+
+  existing.daily_totals = sumNutrients(existing.entries);
+  writeDayLog(existing);
+
+  reqLog.info({ userId, date, entryId }, "entry updated");
+  res.json({ success: true, entry, log: existing });
 });
 
 // Start the server

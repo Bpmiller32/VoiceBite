@@ -131,8 +131,7 @@ export async function parseAndEnrich(
     // Water special case: zero out nutrients, track volume in ml
     if (isPlainWater(food)) {
       const waterMl = toMilliliters(food.quantity, food.unit);
-      console.log(`  💧 "${food.name}" → water (${waterMl}ml)`);
-      log.debug({ food: food.name, waterMl }, "detected plain water");
+      log.info({ food: food.name, waterMl }, "detected plain water");
       entries.push({
         id: crypto.randomUUID(),
         food_name: `water (${waterMl}ml)`,
@@ -143,8 +142,7 @@ export async function parseAndEnrich(
       });
     } else {
       const nutrients: Nutrients = { ...emptyNutrients(), ...item.nutrients };
-      console.log(`  ✓ "${food.name}" → ${Math.round(nutrients.calories)} cal`);
-      log.debug({ food: food.name, calories: nutrients.calories, quantity: food.quantity, unit: food.unit }, "enriched food item");
+      log.info({ food: food.name, calories: nutrients.calories, quantity: food.quantity, unit: food.unit }, "enriched food item");
       entries.push({
         id: crypto.randomUUID(),
         food_name: `${food.name} (${food.quantity} ${food.unit})`,
@@ -240,7 +238,6 @@ function toMilliliters(quantity: number, unit: string): number {
   if (u.includes("cup")) return Math.round(quantity * 236.588);
   if (u.includes("tbsp") || u.includes("tablespoon")) return Math.round(quantity * 14.787);
   log.warn({ unit, quantity }, "unknown water unit, storing quantity as-is");
-  console.log(`  ⚠ Unknown water unit "${unit}", storing quantity as-is`);
   return Math.round(quantity);
 }
 

@@ -103,6 +103,27 @@ export function appendEntries(userId: string, date: string, newEntries: FoodEntr
   return { log: dayLog, filePath };
 }
 
+// List all dates that have food logs for a user
+// Returns an array of YYYY-MM-DD strings sorted newest first
+export function listDates(userId: string): string[] {
+  const log = getLogger();
+  const foodDir = path.join(getDataDir(), "users", userId, "food");
+
+  if (!fs.existsSync(foodDir)) {
+    log.debug({ userId, foodDir }, "food directory not found");
+    return [];
+  }
+
+  const dates = fs.readdirSync(foodDir)
+    .filter(f => f.endsWith(".json"))
+    .map(f => f.replace(".json", ""))
+    .sort()
+    .reverse();
+
+  log.debug({ userId, dateCount: dates.length }, "listed dates");
+  return dates;
+}
+
 // Return today's date as a YYYY-MM-DD string in local time
 export function todayDateString(): string {
   const now = new Date();

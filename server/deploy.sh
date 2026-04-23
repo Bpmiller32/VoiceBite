@@ -7,6 +7,9 @@ PI_HOST="192.168.0.65"
 PI_DIR="/home/billy/VoiceBite"
 SSH_TARGET="${PI_USER}@${PI_HOST}"
 
+# Resolve the server/ directory relative to this script (works from any cwd)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # SSH ControlMaster settings - one password prompt for the whole script
 SOCKET="/tmp/voicebite-deploy-ssh"
 SSH_OPTS="-o ControlMaster=auto -o ControlPath=${SOCKET} -o ControlPersist=60"
@@ -25,14 +28,14 @@ ssh ${SSH_OPTS} ${SSH_TARGET} "mkdir -p ${PI_DIR}/src ${PI_DIR}/data"
 echo "[2/3] Syncing files to Pi..."
 rsync -avz --delete \
   -e "ssh ${SSH_OPTS}" \
-  src/ \
+  "${SCRIPT_DIR}/src/" \
   ${SSH_TARGET}:${PI_DIR}/src/
 
-# Build list of files to sync - only include files that actually exist on this machine
-SYNC_FILES="package.json package-lock.json tsconfig.json"
-[ -f ecosystem.config.cjs ] && SYNC_FILES="$SYNC_FILES ecosystem.config.cjs"
-[ -f .env.example ] && SYNC_FILES="$SYNC_FILES .env.example"
-[ -f .env ] && SYNC_FILES="$SYNC_FILES .env"
+# Build list of files to sync - only include files that actually exist
+SYNC_FILES="${SCRIPT_DIR}/package.json ${SCRIPT_DIR}/package-lock.json ${SCRIPT_DIR}/tsconfig.json"
+[ -f "${SCRIPT_DIR}/ecosystem.config.cjs" ] && SYNC_FILES="$SYNC_FILES ${SCRIPT_DIR}/ecosystem.config.cjs"
+[ -f "${SCRIPT_DIR}/.env.example" ] && SYNC_FILES="$SYNC_FILES ${SCRIPT_DIR}/.env.example"
+[ -f "${SCRIPT_DIR}/.env" ] && SYNC_FILES="$SYNC_FILES ${SCRIPT_DIR}/.env"
 
 rsync -avz \
   -e "ssh ${SSH_OPTS}" \

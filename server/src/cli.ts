@@ -1,10 +1,12 @@
 // cli.ts
 // Interactive command-line interface for VoiceBite
-// Run with: npm start "I ate 2 eggs and toast for breakfast..."
+// Run with: npm start -- --food "I ate 2 eggs and toast for breakfast..."
 // Or:       npm start -- --file ~/notes/today.txt
+// Edit:     npm start -- --date 2026-04-18
 //
 // Flags:
-//   --file <path>        Read food text from a file instead of an inline argument
+//   --food <text>        Food description to log
+//   --file <path>        Read food text from a file instead of inline
 //   --date <YYYY-MM-DD>  Log to a specific date (default: today)
 //   --user <name>        Which user to log as (default: DEFAULT_USER in .env)
 //   --yes                Skip all prompts and save immediately
@@ -35,7 +37,9 @@ function parseArgs(): { text: string | null; file: string | null; date: string; 
 
   // Walk through the args array looking for flags and their values
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--file" && args[i + 1]) {
+    if (args[i] === "--food" && args[i + 1]) {
+      text = args[++i];
+    } else if (args[i] === "--file" && args[i + 1]) {
       file = args[++i]; // Grab the next arg as the file path
     } else if (args[i] === "--date" && args[i + 1]) {
       date = args[++i];
@@ -44,8 +48,9 @@ function parseArgs(): { text: string | null; file: string | null; date: string; 
     } else if (args[i] === "--yes") {
       yes = true;
     } else if (!args[i].startsWith("--")) {
-      // Any non-flag argument is treated as the food text
-      text = args[i];
+      // Warn about bare arguments - all args should use flags
+      console.error(`Unknown argument: "${args[i]}". Did you mean --food "${args[i]}"?`);
+      process.exit(1);
     }
   }
 
@@ -122,6 +127,95 @@ function printPreviewTable(entries: FoodEntry[]): void {
     `${Math.round(t.carbs * 10) / 10}g`
   );
   console.log("─".repeat(93) + "\n");
+}
+
+// Extract a ParsedFood from an existing FoodEntry so we can re-estimate it
+// Parses the serving_description ("2 large egg") into quantity + unit
+function parsedFoodFromEntry(entry: FoodEntry): ParsedFood {
+  const desc = entry.serving_description;
+  const match = desc.match(/^([\d.]+)\s+(.+)$/);
+  if (match) {
+    // Strip the parenthetical serving info from food_name to get the clean name
+    const name = entry.food_name.replace(/\s*\(.*\)$/, "");
+    return { name, quantity: parseFloat(match[1]), unit: match[2] };
+  }
+  return { name: entry.food_name, quantity: 1, unit: "serving" };
+}
+
+// Edit existing day log - lets user delete and/or re-estimate entries
+// Returns the modified entries array, or null if the user cancelled
+async function editExistingLog(existing: DayLog): Promise<FoodEntry[] | null> {
+  let entries = [...existing.entries];
+
+  console.log(`\nExisting entries for ${existing.date}:`);
+  printPreviewTable(entries);
+
+  // Step 1: Delete entries
+  console.log("Items to delete? Enter numbers (e.g. '2 4') or press Enter to skip:");
+  const deleteInput = await promptLine("> ");
+  const deleteNums = deleteInput
+    .trim()
+    .split(/\s+/)
+    .map(Number)
+    .filter(n => !isNaN(n) && n >= 1 && n <= entries.length);
+
+  if (deleteNums.length > 0) {
+    // Sort descending so removing by index doesn't shift later indices
+    const deleteSet = new Set(deleteNums);
+    const removed = entries.filter((_, i) => deleteSet.has(i + 1));
+    entries = entries.filter((_, i) => !deleteSet.has(i + 1));
+    for (const entry of removed) {
+      console.log(`  ✕ Removed: ${entry.food_name}`);
+    }
+    logger.info({ deletedItems: deleteNums, deletedNames: removed.map(e => e.food_name) }, "cli: deleted entries from existing log");
+
+    if (entries.length === 0) {
+      console.log("\n  All entries removed.");
+      const confirm = await promptLine("Save empty log? [Y/n] ");
+      if (confirm.trim().toLowerCase() === "n") {
+        console.log("Cancelled. No changes saved.");
+        return null;
+      }
+      return entries;
+    }
+
+    // Re-print after deletions so numbers are fresh for the fix step
+    console.log("\nAfter deletions:");
+    printPreviewTable(entries);
+  }
+
+  // Step 2: Fix entries (re-estimate)
+  if (entries.length > 0) {
+    console.log("Items to fix? Enter numbers (e.g. '1 3') or press Enter to skip:");
+    const fixInput = await promptLine("> ");
+    const fixNums = fixInput
+      .trim()
+      .split(/\s+/)
+      .map(Number)
+      .filter(n => !isNaN(n) && n >= 1 && n <= entries.length);
+
+    if (fixNums.length > 0) {
+      logger.info({ fixItems: fixNums }, "cli: fixing entries in existing log");
+      for (const num of fixNums) {
+        const idx = num - 1;
+        const parsedFood = parsedFoodFromEntry(entries[idx]);
+        const result = await repickEntry(num, parsedFood, entries[idx]);
+        entries[idx] = result.entry;
+      }
+
+      console.log("\nAfter fixes:");
+      printPreviewTable(entries);
+    }
+  }
+
+  // Step 3: Confirm
+  const answer = await promptLine("Save changes to existing log? [Y/n] ");
+  if (answer.trim().toLowerCase() === "n") {
+    console.log("Cancelled. No changes saved.");
+    return null;
+  }
+
+  return entries;
 }
 
 // Interactive re-pick flow for a single entry
@@ -237,18 +331,39 @@ async function main(): Promise<void> {
     foodText = args.text;
   }
 
-  // No text provided - print usage and exit
+  // No text provided - check if there's an existing log to edit, otherwise show usage
   if (!foodText || foodText.length === 0) {
+    const existingForEdit = readDayLog(args.user, args.date);
+    if (existingForEdit) {
+      // No new food text, but existing log exists - offer to edit it
+      console.log(`\n${existingForEdit.entries.length} entries for ${args.date} (${Math.round(existingForEdit.daily_totals.calories)} cal)`);
+      const editAnswer = await promptLine("Edit existing entries? [Y/n] ");
+      if (editAnswer.trim().toLowerCase() !== "n") {
+        const edited = await editExistingLog(existingForEdit);
+        if (edited !== null) {
+          const dailyTotals = sumNutrients(edited);
+          const editedLog: DayLog = { date: args.date, userId: args.user, entries: edited, daily_totals: dailyTotals };
+          const editPath = writeDayLog(editedLog);
+          console.log(`\n✓ Saved edited log to ${editPath}`);
+          console.log(`  Day total: ${edited.length} entries, ${Math.round(dailyTotals.calories)} kcal`);
+          logger.info({ filePath: editPath, entryCount: edited.length, totalCalories: Math.round(dailyTotals.calories) }, "cli: saved edited existing log (no new text)");
+        }
+      }
+      process.exit(0);
+    }
+
     console.log(`
 VoiceBite - Log food from natural language text
 
 Usage:
-  npm start "2 eggs scrambled, toast with butter, chipotle chicken burrito bowl, 6oz salmon"
+  npm start -- --food "2 eggs scrambled, toast with butter, chipotle burrito bowl"
   npm start -- --file ~/notes/today.txt
-  npm start -- --file today.txt --date 2026-04-10
-  npm start -- --yes "everything I ate today..."
+  npm start -- --date 2026-04-18 --food "6oz salmon for dinner"
+  npm start -- --date 2026-04-18                          # edit existing day
+  npm start -- --yes --food "everything I ate today..."
 
 Flags:
+  --food <text>        Food description to log
   --file <path>        Read food text from a file
   --date <YYYY-MM-DD>  Log to a specific date (default: today)
   --user <name>        User to log as (default: ${process.env.DEFAULT_USER || "default"})
