@@ -1,6 +1,10 @@
 // All shared TypeScript types used across the app
 // If you need to understand what data looks like at any point in the pipeline, look here
 
+// Schema version stamped on every day log we write.
+// v1 (unversioned) files are normalized to v2 on read - see store.ts normalizeDayLog()
+export const SCHEMA_VERSION = 2;
+
 // One food item as parsed from the user's raw text by Claude
 // This is the "before enrichment" state - just what the user described
 export interface ParsedFood {
@@ -12,46 +16,53 @@ export interface ParsedFood {
   unit: string;
 }
 
-// Full nutrient profile for one food item
-// All values are per the serving described in the ParsedFood that produced this
-export interface Nutrients {
+// The 29 nutrient field names, in one place.
+// Everything else (empty objects, summing, validation, the Claude schema) derives from this,
+// so adding a nutrient is a one-line change here.
+export const NUTRIENT_KEYS = [
   // Macros
-  calories: number;
-  protein_g: number;
-  fat_g: number;
-  carbs_g: number;
-  fiber_g: number;
-  sugar_g: number;
-  saturated_fat_g: number;
-
+  "calories", "protein_g", "fat_g", "carbs_g",
+  "fiber_g", "sugar_g", "saturated_fat_g",
   // Vitamins
-  vitamin_a_mcg: number;
-  vitamin_c_mg: number;
-  vitamin_d_mcg: number;
-  vitamin_e_mg: number;
-  vitamin_k_mcg: number;
-  vitamin_b12_mcg: number;
-  vitamin_b6_mg: number;
-  folate_mcg: number;
-  thiamin_mg: number;
-  riboflavin_mg: number;
-  niacin_mg: number;
-
+  "vitamin_a_mcg", "vitamin_c_mg", "vitamin_d_mcg",
+  "vitamin_e_mg", "vitamin_k_mcg", "vitamin_b12_mcg",
+  "vitamin_b6_mg", "folate_mcg", "thiamin_mg",
+  "riboflavin_mg", "niacin_mg",
   // Minerals
-  calcium_mg: number;
-  iron_mg: number;
-  magnesium_mg: number;
-  potassium_mg: number;
-  sodium_mg: number;
-  zinc_mg: number;
-  selenium_mcg: number;
-  phosphorus_mg: number;
-
+  "calcium_mg", "iron_mg", "magnesium_mg",
+  "potassium_mg", "sodium_mg", "zinc_mg",
+  "selenium_mcg", "phosphorus_mg",
   // Extras worth tracking
-  cholesterol_mg: number;
-  caffeine_mg: number;
-  alcohol_g: number;
-}
+  "cholesterol_mg", "caffeine_mg", "alcohol_g",
+] as const;
+
+export type NutrientKey = (typeof NUTRIENT_KEYS)[number];
+
+// The four macros we always require an estimate for - Claude can always ballpark these.
+// Everything else is allowed to come back unknown.
+export const CORE_NUTRIENT_KEYS: NutrientKey[] = ["calories", "protein_g", "fat_g", "carbs_g"];
+
+// Full nutrient profile for one food item, per the serving described.
+//
+// null means UNKNOWN - Claude had no basis for an estimate.
+// 0 means the food genuinely contains none of it.
+// These are different, and conflating them is what made every micronutrient chart lie:
+// summing "unknown" as zero biased every daily total downward by an unstable amount.
+export type Nutrients = { [K in NutrientKey]: number | null };
+
+// Daily totals are always concrete numbers - they're the sum of whatever was known.
+// Read them alongside DayLog.daily_coverage to know how much of the day actually contributed.
+export type NutrientTotals = { [K in NutrientKey]: number };
+
+// How many entries contributed a known (non-null) value to each daily total.
+// Lets the UI say "potassium: 1,240 mg (from 6 of 9 items)" instead of implying false precision.
+export type NutrientCoverage = { [K in NutrientKey]: number };
+
+// Where a food entry's nutrient data came from.
+// "claude_estimate" = Claude estimated it, "water" = plain water bypass.
+// "gpt_estimate" and "usda" are legacy sources from earlier versions of this app -
+// 24 of the 226 historical entries carry them, so the union has to admit them.
+export type EntrySource = "claude_estimate" | "water" | "gpt_estimate" | "usda";
 
 // A single food entry ready to be saved - parsed food + its nutrient data
 export interface FoodEntry {
@@ -62,16 +73,38 @@ export interface FoodEntry {
   // How the serving was described (e.g. "2 large eggs", "1 bowl", "6 oz")
   serving_description: string;
   // Where the nutrient data came from
-  // "claude_estimate" = Claude estimated, "water" = plain water bypass
-  source: "claude_estimate" | "water";
-  // Full nutrient profile for this serving (all zeros for water)
+  source: EntrySource;
+  // Full nutrient profile for this serving (null = unknown, 0 = contains none)
   nutrients: Nutrients;
-  // Volume of water in milliliters - only set when source is "water", used for hydration insights
+  // Volume of water in milliliters - only set for water entries, used for hydration totals
   water_ml?: number;
+  // Which batch (utterance) produced this entry - links back to DayLog.batches
+  batch_id?: string;
+  // When this entry was logged, ISO instant. Only set on entries written by schema v2+.
+  logged_at?: string;
+  // The structured parse that produced this entry, kept so re-estimating an entry
+  // doesn't have to reverse-engineer quantity/unit out of the display string
+  parsed?: ParsedFood;
+  // Legacy provenance from the retired USDA FoodData Central lookup
+  provenance?: { fdc_id?: number; fdc_description?: string };
+}
+
+// One submission - the raw text the user spoke or typed, and what it produced.
+// Stored so the UI can show "you said X, we logged Y" and you can judge whether to re-record.
+export interface LogBatch {
+  batch_id: string;
+  // ISO instant this batch was confirmed
+  logged_at: string;
+  // The exact text that was sent to Claude
+  transcript: string;
+  // How many entries this batch produced
+  entry_count: number;
 }
 
 // The full contents of one daily food log file (e.g. data/users/billy/food/2026-04-12.json)
 export interface DayLog {
+  // Which schema generation wrote this file
+  schema_version: number;
   // The date this log is for, YYYY-MM-DD format
   date: string;
   // The user this log belongs to
@@ -79,8 +112,157 @@ export interface DayLog {
   // All the individual food entries logged for this day
   entries: FoodEntry[];
   // Pre-computed daily totals so you don't have to sum manually when reading the file
-  daily_totals: Nutrients;
+  daily_totals: NutrientTotals;
+  // How many entries contributed a known value to each total (see NutrientCoverage)
+  daily_coverage: NutrientCoverage;
+  // Total water for the day in ml - daily_totals can't carry this, it isn't a nutrient
+  daily_water_ml: number;
+  // The submissions that built this day, oldest first
+  batches: LogBatch[];
 }
+
+// One day's worth of summary data, for range queries that power the history charts.
+// Deliberately omits `entries` - a 90-day chart doesn't need 700 food items.
+export interface DaySummary {
+  date: string;
+  entry_count: number;
+  daily_totals: NutrientTotals;
+  daily_coverage: NutrientCoverage;
+  daily_water_ml: number;
+}
+
+// Daily targets. Every reference line on every chart is drawn from these.
+//
+// These live on the server rather than in the browser so the phone and the desktop draw
+// the same lines from the same data. When they were in localStorage, logging on one device
+// and reviewing on the other silently compared your intake against two different goals.
+export interface Goals {
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  // The two below are upper limits you want to stay under, not targets to reach.
+  sodium_mg: number;
+  sugar_g: number;
+  water_ml: number;
+  // Optional targets. Blank means "track it, don't aim at a number".
+  weight_target?: number;
+  distance_target?: number;
+  sleep_target?: number;
+  // Display units. Storage keeps whatever was entered; these are display only.
+  weight_unit: WeightUnit;
+  distance_unit: "mi" | "km";
+}
+
+// Numeric goals that share the same validation. weight_unit is handled separately
+// because it is an enum, not a positive number.
+export const GOAL_KEYS: Array<keyof Goals> = [
+  "calories", "protein_g", "carbs_g", "fat_g", "sodium_mg", "sugar_g", "water_ml",
+  "weight_target", "distance_target", "sleep_target",
+];
+
+// 2300 mg sodium and 36 g added sugar are the standard adult daily upper limits
+// (FDA and AHA respectively); the rest are ordinary starting points to edit.
+export const DEFAULT_GOALS: Goals = {
+  calories: 2200,
+  protein_g: 150,
+  carbs_g: 220,
+  fat_g: 70,
+  sodium_mg: 2300,
+  sugar_g: 36,
+  water_ml: 3000,
+  sleep_target: 8,
+  distance_target: 3,
+  weight_unit: "lb",
+  distance_unit: "mi",
+};
+
+// ── Daily metrics ──────────────────────────────────────────────────────────
+//
+// Weight, distance walked, sleep - one scalar per day each, entered by hand.
+//
+// Generalised rather than three parallel implementations, because the list is obviously
+// going to grow (steps, resting heart rate, whatever the watch shows next) and each new
+// one should be a row in this table, not another file + endpoints + card + chart.
+export type MetricKey = "weight" | "distance" | "sleep";
+
+export const METRIC_KEYS: MetricKey[] = ["weight", "distance", "sleep"];
+
+export interface MetricDef {
+  label: string;
+  /** Units the value may be entered in. First is the default. */
+  units: string[];
+  /** Plausibility ceiling per unit - catches a slipped decimal, not health advice. */
+  max: Record<string, number>;
+  decimals: number;
+  /** Which way is "good", for colouring a chart against its target. */
+  better: "higher" | "lower";
+  /** Optional goal field in Goals, if this metric has a target. */
+  goalKey?: "weight_target" | "distance_target" | "sleep_target";
+  /** Optional unit-preference field in Goals. Metrics with one unit don't need one. */
+  unitKey?: "weight_unit" | "distance_unit";
+  hint: string;
+}
+
+export const METRICS: Record<MetricKey, MetricDef> = {
+  weight: {
+    label: "Weight", units: ["lb", "kg"], max: { lb: 1000, kg: 454 }, decimals: 1,
+    better: "lower", goalKey: "weight_target", unitKey: "weight_unit",
+    hint: "e.g. 181.4",
+  },
+  distance: {
+    label: "Distance walked", units: ["mi", "km"], max: { mi: 200, km: 320 }, decimals: 2,
+    better: "higher", goalKey: "distance_target", unitKey: "distance_unit",
+    hint: "e.g. 3.4",
+  },
+  sleep: {
+    // Hours only. Nobody enters sleep in minutes, and offering both invites "7" meaning
+    // seven minutes.
+    label: "Sleep", units: ["h"], max: { h: 24 }, decimals: 1,
+    better: "higher", goalKey: "sleep_target",
+    hint: "e.g. 7.5",
+  },
+};
+
+// One reading. Stored exactly as entered, with its unit, rather than converted to a
+// canonical unit on the way in - a round trip through kg and back would quietly turn 180.4 lb
+// into 180.38. The server computes both representations on read so the client never converts.
+export interface MetricReading {
+  value: number;
+  unit: string;
+  logged_at: string;
+}
+
+/** Everything recorded for one date. Any subset of the metrics may be present. */
+export type DayMetrics = Partial<Record<MetricKey, MetricReading>>;
+
+/** A reading as served to clients: the original, plus every unit precomputed. */
+export interface MetricPoint extends MetricReading {
+  date: string;
+  metric: MetricKey;
+  /** value converted into each supported unit, so the client never converts. */
+  in: Record<string, number>;
+}
+
+export type WeightUnit = "lb" | "kg";
+
+export const LB_PER_KG_CONST = 2.2046226218;
+export const KM_PER_MI = 1.609344;
+
+/** Convert a reading into every unit its metric supports. */
+export function convertMetric(metric: MetricKey, value: number, unit: string): Record<string, number> {
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+  if (metric === "weight") {
+    const kg = unit === "kg" ? value : value / LB_PER_KG_CONST;
+    return { kg: round(kg), lb: round(kg * LB_PER_KG_CONST) };
+  }
+  if (metric === "distance") {
+    const km = unit === "km" ? value : value * KM_PER_MI;
+    return { km: round(km), mi: round(km / KM_PER_MI) };
+  }
+  return { h: round(value) };
+}
+
 
 // A pending log session - created after parsing/enriching, waiting for user confirmation
 // Lives in memory only, never written to disk
@@ -93,7 +275,11 @@ export interface PendingSession {
   date: string;
   // The enriched entries ready to save once confirmed
   entries: FoodEntry[];
-  // When this session was created - used to expire stale sessions after 10 minutes
+  // The raw text that produced these entries
+  transcript: string;
+  // Whether confirming should replace the whole day rather than append to it
+  overwrite: boolean;
+  // When this session was created - used to expire stale sessions
   createdAt: Date;
 }
 
@@ -103,6 +289,8 @@ export interface LogPreviewResponse {
   sessionId: string;
   // The date entries will be logged to
   date: string;
+  // The text we parsed, echoed back so the UI can show "you said ..."
+  transcript: string;
   // The entries the user is about to confirm
   entries: FoodEntry[];
   // Total calories and key macros as a quick summary
@@ -112,14 +300,15 @@ export interface LogPreviewResponse {
     totalFat_g: number;
     totalCarbs_g: number;
   };
+  // What's already logged for this day, so the UI can warn before appending
+  existingEntries: number;
+  existingCalories: number;
 }
 
 // What the HTTP server sends back after POST /confirm/:sessionId
 export interface ConfirmResponse {
-  // Whether it worked
   success: boolean;
-  // Human-readable message
   message: string;
-  // Path to the file that was written
-  filePath?: string;
+  // The day log as it stands after saving, so the client doesn't need a follow-up GET
+  log: DayLog;
 }

@@ -1,0 +1,1091 @@
+/* VoiceBite - the whole visual system.
+ *
+ * One file, no framework, no build step beyond Vite. Everything downstream uses the
+ * class names in the CSS contract; nothing here is generated or scoped per component.
+ *
+ * Two decisions worth explaining up front:
+ *
+ * 1. Dark is the base theme and light is the override (`prefers-color-scheme: light`),
+ *    not the other way round. This app gets opened at 7am and 11pm on a phone in a
+ *    dark room; if the media query is ever unsupported or stripped, dark is the
+ *    better thing to fall back to.
+ *
+ * 2. The chart palette (--chart-1..6) lives here rather than in the chart component
+ *    on purpose. Chart hues and UI hues have to be one palette or the charts start
+ *    looking like a foreign object pasted into the page, and the chart colors have to
+ *    change with the theme - a hue stepped for a #0d1117 surface is muddy on white.
+ *    Both columns are the validated categorical palette (blue, orange, aqua, yellow,
+ *    magenta, green in that fixed order - the order is the colorblind-safety
+ *    mechanism, so do not reshuffle it). Worst adjacent CVD pair: ΔE 9.1 light /
+ *    8.4 dark, normal-vision 19.6 / 19.3. Three of the light hues sit under 3:1
+ *    against white, which is why every multi-series chart ships a legend, labeled
+ *    reference lines, valued axes and a table view - color is never the only channel.
+ */
+
+/* ── Tokens ──────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0d1117;
+  --surface: #151b23;
+  --surface-2: #1c232e;
+  --border: #262e3a;
+
+  --text: #e8edf4;
+  --text-muted: #98a3b3;
+  /* Faint, not illegible. This tier carries the coverage lines ("from 6 of 9 items"),
+   * which are the whole honesty mechanism - they were at 3.4:1 on --surface-2, below
+   * the 4.5:1 small-text floor. Now ~4.8:1 there and better on --bg. */
+  --text-faint: #838e9d;
+
+  --accent: #3987e5;
+  --accent-fg: #07131f;
+  --accent-soft: rgba(57, 135, 229, 0.16);
+
+  --danger: #e66767;
+  --warn: #fab219;
+  --ok: #2fb32f;
+
+  --radius: 10px;
+  --radius-lg: 16px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.28);
+  --gap: 16px;
+
+  /* Categorical slots, stepped for the dark surface. Fixed order. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+  --chart-grid: #222a35;
+  /* Axis labels are numbers people read, not decoration - they hold 4.5:1 on --surface. */
+  --chart-axis: #8492a1;
+
+  /* Type. The heading face is deliberately not the UI sans - a warm old-style serif
+   * gives the app a voice without costing a webfont request (all local faces, with
+   * Georgia as the universally-present floor). Figures stay in the sans. */
+  --font-display: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --border: #e2dfd7;
+
+    --text: #15171c;
+    --text-muted: #5b6068;
+    /* Light mode is where the faint tier failed hardest: #8a8f98 was 2.9:1 on the
+     * off-white --surface-2 the stat tiles use. Outdoors on a phone that is invisible. */
+    --text-faint: #686d74;
+
+    --accent: #256abf;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(37, 106, 191, 0.1);
+
+    --danger: #d03b3b;
+    --warn: #a5700c;
+    --ok: #0a8a0a;
+
+    --shadow: 0 1px 2px rgba(20, 22, 26, 0.06), 0 6px 18px rgba(20, 22, 26, 0.07);
+
+    --chart-1: #2a78d6;
+    --chart-2: #eb6834;
+    --chart-3: #1baf7a;
+    --chart-4: #eda100;
+    --chart-5: #e87ba4;
+    --chart-6: #008300;
+    --chart-grid: #e8e5de;
+    --chart-axis: #6b6f76;
+  }
+}
+
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+* { margin: 0; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  /* The one-handed-on-a-phone constraint: nothing may ever scroll sideways. */
+  overflow-x: hidden;
+}
+
+img, svg, video, canvas { display: block; max-width: 100%; }
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button { background: none; border: none; }
+
+ul, ol { list-style: none; padding: 0; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection { background: var(--accent-soft); }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav::-webkit-scrollbar { display: none; }
+
+.nav-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.nav-btn:active { background: var(--surface-2); }
+.nav-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 16px;
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
+}
+
+.footer {
+  padding: 24px 16px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.8125rem;
+}
+
+/* On a phone the top of the screen is the one place a thumb cannot reach, and this app
+ * is opened one-handed two or three times a day. Below 640px the nav leaves the header
+ * and docks to the bottom edge; the header stops being sticky, since the tabs are now
+ * always in reach and 48px of permanent chrome is a lot of a 667pt screen to spend on a
+ * wordmark. Layout only - the markup and the hash routing are untouched. */
+@media (max-width: 640px) {
+  .topbar {
+    position: static;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--bg);
+  }
+
+  .nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    margin-left: 0;
+    gap: 0;
+    padding: 6px calc(8px + env(safe-area-inset-left)) 6px calc(8px + env(safe-area-inset-right));
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: saturate(160%) blur(12px);
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    border-top: 1px solid var(--border);
+    overflow-x: visible;
+  }
+
+  .nav-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0 6px;
+    text-align: center;
+  }
+
+  /* Clears the docked bar so the last card is never trapped underneath it. */
+  .footer { padding-bottom: calc(24px + 60px + env(safe-area-inset-bottom)); }
+
+  /* iOS pins fixed elements to the visual viewport, so with the keyboard up the docked bar
+   * lands on top of the box you are typing into - on the one screen where typing matters
+   * most. Stand it down while the capture box has focus; it returns with the keyboard.
+   * If :has() is unsupported the rule is simply dropped and the bar stays put.
+   *
+   * Scoped to .textarea deliberately. This previously also matched `.input:focus`, which
+   * meant tapping the date picker on Today made the whole navigation vanish - and a date
+   * input opens a wheel picker on iOS, not a keyboard, so there was nothing to get out of
+   * the way of. Short inline fields sit inside scrollable cards and don't need this either. */
+  .app:has(.textarea:focus) .nav { display: none; }
+}
+
+/* ── Surface ─────────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.card-header {
+  display: flex;
+  /* Centered, not baseline: nearly every header pairs a 17px title with a 40px button
+   * or a legend, and baseline alignment hung those off the title's baseline. */
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-title {
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+.card-subtitle {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.card-body { padding: 16px; }
+
+/* ── Flow ────────────────────────────────────────────────────────────────── */
+
+.stack { display: flex; flex-direction: column; gap: var(--gap); }
+.stack-sm { display: flex; flex-direction: column; gap: 8px; }
+
+.row { display: flex; align-items: center; gap: 8px; }
+/* Wraps rather than crushes: at 375px a label/value pair like "45% of 900 mcg RDA" next
+ * to "from 6 of 9" has to be allowed a second line instead of squeezing to two words. */
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.row-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
+.grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--gap);
+}
+
+.spacer { flex: 1 1 auto; }
+
+@media (max-width: 640px) {
+  .grid-2,
+  .grid-3 { grid-template-columns: minmax(0, 1fr); }
+  /* .grid-auto keeps its auto-fit - stat tiles pair up fine at 150px even on a 375px
+   * phone, and forcing them to one column makes a KPI row absurdly tall. */
+}
+
+/* ── Type ────────────────────────────────────────────────────────────────── */
+
+.h1, .h2, .h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.005em;
+}
+.h1 { font-size: clamp(1.75rem, 1.45rem + 1.5vw, 2.125rem); }
+.h2 { font-size: 1.25rem; }
+.h3 { font-size: 1.0625rem; }
+
+/* A heading that IS a figure - the day's calorie count is the largest thing on Today,
+ * and it has to be the biggest number in the app or the screen reads as four equal
+ * tiles. Figures stay in the sans even at display size; the serif is for words. */
+.h1.num, .h2.num, .h3.num {
+  font-family: var(--font-body);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.muted { color: var(--text-muted); }
+.small { font-size: 0.8125rem; line-height: 1.45; }
+.mono { font-family: var(--font-mono); font-size: 0.875em; }
+
+/* Every figure in the app aligns vertically with the figure above it. */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* inline-block, not inline: overflow/text-overflow are ignored on an inline box, so the
+ * old rule only removed the wrapping and let a long food name push the row sideways
+ * instead of ellipsizing it. */
+.truncate {
+  display: inline-block;
+  vertical-align: bottom;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+.btn:active { transform: translateY(0.5px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* An <a class="btn"> is a real button here - hash links are this app's whole router. */
+a.btn { text-decoration: none; }
+a.btn:hover { text-decoration: none; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.btn-ghost:active { background: var(--surface-2); }
+
+.btn-danger {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+
+/* Still 40px tall - below that it stops being a reliable thumb target. */
+.btn-sm {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 0.875rem;
+}
+
+.btn-icon {
+  min-width: 44px;
+  padding: 0;
+  border-radius: var(--radius);
+}
+.btn-icon.btn-sm { min-width: 40px; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Full 44px: the range chips are the primary control on History and a "7d" chip is
+   * already narrow - it must not also be short. */
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.chip.is-on {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Hover is additive only - every one of these already reads correctly at rest and on
+ * :active, so a touch device loses nothing by never entering these states. */
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) { border-color: var(--text-faint); }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 88%, var(--text));
+    border-color: color-mix(in srgb, var(--accent) 88%, var(--text));
+  }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .chip:hover { border-color: var(--text-faint); color: var(--text); }
+  .chip.is-on:hover { color: var(--accent); }
+  .nav-btn:hover { background: var(--surface-2); color: var(--text); }
+  .nav-btn.is-active:hover { color: var(--accent); }
+  .mic:hover:not(:disabled) { filter: brightness(1.08); }
+}
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+
+.label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  /* 16px exactly: anything smaller makes iOS Safari zoom the page on focus. */
+  font-size: 16px;
+  line-height: 1.4;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.input::placeholder,
+.textarea::placeholder { color: var(--text-faint); }
+
+.input:focus,
+.textarea:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  /* Inline caret - an icon package is not on the menu. */
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 18px) calc(50% + 1px), calc(100% - 12px) calc(50% + 1px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
+.checkbox {
+  width: 20px;
+  height: 20px;
+  /* The 20px box lives inside a 44px tap area supplied by its label row. */
+  margin: 12px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: none;
+}
+
+/* ── Feedback ────────────────────────────────────────────────────────────── */
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: vb-spin 720ms linear infinite;
+}
+
+@keyframes vb-spin { to { transform: rotate(360deg); } }
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+.banner-error {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--text);
+}
+.banner-warn {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+}
+.banner-info {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+/* Centered prose past ~44 characters a line is hard to track back to. */
+.empty > * { max-width: 44ch; }
+.empty .h3 { color: var(--text); }
+
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    color-mix(in srgb, var(--surface-2) 55%, var(--border)) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: vb-shimmer 1400ms ease-in-out infinite;
+  min-height: 16px;
+}
+
+@keyframes vb-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* ── Data ────────────────────────────────────────────────────────────────── */
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.stat-sub {
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+
+.bar {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+/* Square at the baseline, 4px rounded at the data end - same mark spec the charts use. */
+.bar-fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.entry:last-child { border-bottom: none; }
+
+.entry-main { flex: 1; min-width: 0; }
+
+.entry-name {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.entry-serving {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.entry-macros {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The row reads "420 kcal · P 30 · C 12 · F 9", and the calorie figure is the one people
+ * scan for. It was inheriting the faintest tier while the P/C/F tail carried .muted -
+ * i.e. exactly backwards. This puts the tail one step back instead. */
+.entry-macros .muted { color: var(--text-faint); }
+
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* The macro fields inside an editable review row. Without a basis each .field sized
+ * itself to the input's default ~20-character intrinsic width, so four of them stacked
+ * into four full-width rows and a nine-item preview became a scroll marathon. */
+.entry-macros.row-wrap {
+  gap: 8px;
+  white-space: normal;
+}
+.entry-macros.row-wrap .field {
+  flex: 1 1 104px;
+  min-width: 0;
+  gap: 2px;
+}
+
+/* Three columns of name / numbers / buttons do not fit in 343px of phone. Below 560px
+ * the row becomes stacked bands: what it was, what it cost, what you can do about it. */
+@media (max-width: 560px) {
+  .entry {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 14px 0;
+  }
+  .entry-main { flex: 1 1 100%; }
+  .entry-macros {
+    flex: 1 1 auto;
+    white-space: normal;
+  }
+  .entry-actions { margin-left: auto; }
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.table th,
+.table td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.table th:first-child,
+.table td:first-child { text-align: left; }
+.table tbody tr:last-child td { border-bottom: none; }
+
+/* ── Voice ───────────────────────────────────────────────────────────────── */
+
+.mic {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+/* The mic is disabled while a parse is in flight; without this it kept its full accent
+ * fill and looked tappable. */
+.mic:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.mic-idle {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.mic-recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* The ring is a sibling/child element, so it can pulse without moving the button. */
+.mic-pulse {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid var(--danger);
+  pointer-events: none;
+  animation: vb-pulse 1600ms ease-out infinite;
+}
+
+@keyframes vb-pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+.transcript {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.5;
+  min-height: 48px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Chart chrome ────────────────────────────────────────────────────────────
+ * These are NOT part of the shared class contract - they belong to HistoryScreen
+ * and nothing else should reach for them. They live here because the chart's
+ * colors and the UI's colors have to come from the same tokens.
+ */
+
+.chart-scroll {
+  /* The only element in the app allowed to scroll horizontally. 90 days of bars
+   * cannot legibly compress into 343px of phone, so the card scrolls, not the page. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  padding-bottom: 2px;
+}
+
+.chart { width: 100%; }
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.chart-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Legends mirror the mark: a rect for bars/areas, a short stroke for lines. */
+.chart-key {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+}
+.chart-key-line {
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.chart-tip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px 12px;
+  min-width: 168px;
+  font-size: 0.8125rem;
+}
+
+.chart-tip-date {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.chart-tip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+/* Values lead, labels follow - the reader already knows the series, they want the number. */
+.chart-tip-value {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tip-label { color: var(--text-muted); }
+
+.chart-note {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+/* ── Motion ──────────────────────────────────────────────────────────────── */
+
+
+/* ── Motion ──────────────────────────────────────────────────────────────────
+ *
+ * The rule everything here follows: motion should explain a change, not decorate
+ * one. Things that enter, rise into place. Things you press, give. Things that
+ * change value, travel to it rather than teleporting. Nothing loops, nothing
+ * blocks input, and nothing runs longer than it takes to read.
+ *
+ * All of it is CSS, on purpose - an animation library for this would be a
+ * dependency to maintain in exchange for effects a keyframe already does.
+ *
+ * Every rule below is neutralised by the prefers-reduced-motion block further
+ * down, which is not a nicety: for some people this kind of movement causes
+ * actual nausea.
+ */
+
+:root {
+  /* Decisive start, soft landing - the workhorse. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Overshoots slightly then settles. This is the "bouncy" one; used sparingly,
+   * because on anything large or frequent it reads as sloppy rather than lively. */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur-fast: 130ms;
+  --dur: 220ms;
+  --dur-slow: 400ms;
+}
+
+@keyframes vb-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes vb-pop {
+  from { opacity: 0; transform: scale(0.82); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes vb-slide-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes vb-grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* Cards enter in sequence rather than all at once. The delay is capped so a long
+ * History page doesn't spend a second and a half assembling itself.
+ *
+ * This only fires on mount. React re-renders don't remount, so refreshing a day's
+ * data does NOT replay it - which would be motion sickness, not polish. */
+.main > .stack > * {
+  animation: vb-rise var(--dur-slow) var(--ease-out) both;
+}
+  .main > .stack > *:nth-child(1) { animation-delay: 0ms; }
+  .main > .stack > *:nth-child(2) { animation-delay: 38ms; }
+  .main > .stack > *:nth-child(3) { animation-delay: 76ms; }
+  .main > .stack > *:nth-child(4) { animation-delay: 114ms; }
+  .main > .stack > *:nth-child(5) { animation-delay: 152ms; }
+  .main > .stack > *:nth-child(6) { animation-delay: 190ms; }
+  .main > .stack > *:nth-child(7) { animation-delay: 228ms; }
+  .main > .stack > *:nth-child(8) { animation-delay: 266ms; }
+  .main > .stack > *:nth-child(9) { animation-delay: 304ms; }
+  .main > .stack > *:nth-child(10) { animation-delay: 342ms; }
+  .main > .stack > *:nth-child(11) { animation-delay: 380ms; }
+  .main > .stack > *:nth-child(12) { animation-delay: 380ms; }
+  .main > .stack > *:nth-child(13) { animation-delay: 380ms; }
+  .main > .stack > *:nth-child(14) { animation-delay: 380ms; }
+
+/* Anything pressable gives under the finger. 0.97 is small enough to read as
+ * physical rather than cartoonish. */
+.btn,
+.chip,
+.nav-btn {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    opacity var(--dur-fast) ease;
+}
+.btn:active:not(:disabled),
+.chip:active,
+.nav-btn:active { transform: scale(0.97); }
+
+/* The selected range/tab settles in with a touch of spring. */
+.chip.is-on,
+.nav-btn.is-active { animation: vb-pop var(--dur) var(--ease-spring) both; }
+
+/* Badges are almost always confirmations ("saved", "limit", "partial"), so a small
+ * pop is the point rather than decoration. */
+.badge { animation: vb-pop var(--dur) var(--ease-spring) both; }
+
+/* Banners arrive from above, where they sit. */
+.banner { animation: vb-slide-in var(--dur) var(--ease-out) both; }
+
+/* Bars grow from the left on first paint, then travel when the value changes -
+ * so a re-estimate visibly moves the bar instead of cutting to a new width. */
+.bar-fill {
+  transform-origin: left center;
+  animation: vb-grow var(--dur-slow) var(--ease-out) both;
+  transition: width var(--dur-slow) var(--ease-out), background-color var(--dur) ease;
+}
+
+/* Entries and metric rows fade in under their card rather than snapping. */
+.entry { animation: vb-rise var(--dur) var(--ease-out) both; }
+
+/* Inputs acknowledge focus. */
+.input, .textarea, .select {
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Named explicitly rather than relying on the blanket rule above: a spinner frozen
+   * mid-rotation and a pulse ring stuck at 70% opacity both read as broken UI. */
+  .main > .stack > *,
+  .entry,
+  .badge,
+  .banner,
+  .bar-fill,
+  .chip.is-on,
+  .nav-btn.is-active { animation: none !important; opacity: 1; transform: none; }
+  .btn:active:not(:disabled),
+  .chip:active,
+  .nav-btn:active { transform: none; }
+
+  .spinner { animation: none; border-top-color: currentColor; opacity: 0.75; }
+  .mic-pulse { animation: none; opacity: 0.35; }
+  .skeleton { animation: none; background: var(--surface-2); }
+}

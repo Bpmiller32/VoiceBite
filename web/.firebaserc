@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "voicebite-bpmiller"
+  },
+  "targets": {
+    "voicebite-bpmiller": {
+      "hosting": {
+        "app": [
+          "voicebite"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

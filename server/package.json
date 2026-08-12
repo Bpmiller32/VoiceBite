@@ -7,10 +7,15 @@
     "start": "tsx src/cli.ts",
     "server": "tsx src/server.ts",
     "dev:cli": "tsx watch src/cli.ts",
-    "dev:server": "tsx watch src/server.ts"
+    "dev:server": "tsx watch src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "set-password": "tsx src/set-password.ts"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.88.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

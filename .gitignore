@@ -1,8 +1,7 @@
-node_modules/
-dist/
-.env
-data/
-logs/
-*.db
-package-lock.json
+/server/data/users/billy/food
+/web/dist
+server/data/.DS_Store
+server/data/users/.DS_Store
+server/.DS_Store
 .DS_Store
+/web/.firebase

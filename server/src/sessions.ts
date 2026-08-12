@@ -1,53 +1,67 @@
 // sessions.ts
 // Manages pending log sessions in memory
-// A "session" is created after we parse and enrich food entries but before the user confirms
-// The user gets a sessionId, reviews the food list, then hits /confirm/:sessionId to save it
-// Sessions expire after 10 minutes if not confirmed
+// A "session" is created after we parse and enrich food entries but before the user confirms.
+// The user gets a sessionId, reviews the food list, then hits /confirm/:sessionId to save it.
 
 import { PendingSession, FoodEntry } from "./types";
 import { getLogger } from "./logger";
 
-// In-memory map of sessionId → session data
-// This is fine for a personal Pi server - one user, no persistence needed across restarts
+// In-memory map of sessionId -> session data.
+// Fine for a personal Pi server. The tradeoff is that a restart or deploy drops any
+// in-flight confirmation, so the TTL below is generous enough to survive a slow review
+// but the client should be prepared for a 404 and re-submit.
 const sessions = new Map<string, PendingSession>();
 
-// How long (in milliseconds) a session is valid before it expires
-const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+// How long a session is valid before it expires.
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Upper bound on how many pending sessions we hold, so a burst can't grow memory unbounded.
+const MAX_SESSIONS = 100;
 
 // Create a new pending session and return the sessionId
-export function createSession(userId: string, date: string, entries: FoodEntry[]): string {
+export function createSession(
+  userId: string,
+  date: string,
+  entries: FoodEntry[],
+  transcript: string,
+  overwrite: boolean,
+): string {
   const log = getLogger();
-  // Generate a random unique ID for this session
   const sessionId = crypto.randomUUID();
+
+  // Evict the oldest if we're at the cap. Map preserves insertion order.
+  if (sessions.size >= MAX_SESSIONS) {
+    const oldest = sessions.keys().next().value;
+    if (oldest) sessions.delete(oldest);
+  }
 
   sessions.set(sessionId, {
     sessionId,
     userId,
     date,
     entries,
+    transcript,
+    overwrite,
     createdAt: new Date(),
   });
 
-  log.info({ sessionId, userId, date, entryCount: entries.length }, "session created");
+  log.info({ sessionId, userId, date, entryCount: entries.length, overwrite }, "session created");
   return sessionId;
 }
 
-// Retrieve a pending session by ID
-// Returns null if the session doesn't exist or has expired
+// Retrieve a pending session by ID.
+// Returns null if the session doesn't exist or has expired.
 export function getSession(sessionId: string): PendingSession | null {
   const log = getLogger();
   const session = sessions.get(sessionId);
 
-  // Session doesn't exist
   if (!session) {
     log.debug({ sessionId, found: false }, "session lookup");
     return null;
   }
 
-  // Check if the session has expired
   const ageMs = Date.now() - session.createdAt.getTime();
   if (ageMs > SESSION_TTL_MS) {
-    // Clean it up and treat it as not found
     sessions.delete(sessionId);
     log.info({ sessionId, ageMs }, "session expired on lookup");
     return null;
@@ -64,8 +78,14 @@ export function deleteSession(sessionId: string): void {
   log.debug({ sessionId }, "session deleted");
 }
 
-// Purge all sessions older than SESSION_TTL_MS - call this periodically to avoid memory leaks
-// The server calls this on a timer so old unconfirmed sessions don't pile up
+// How many sessions are currently pending - reported by GET /health
+export function sessionCount(): number {
+  return sessions.size;
+}
+
+// Purge all sessions older than SESSION_TTL_MS - called on a timer by the server.
+// The interval is deliberately shorter than the TTL so an expired session doesn't
+// linger in memory for up to another full interval before being collected.
 export function purgeExpiredSessions(): void {
   const log = getLogger();
   const now = Date.now();
