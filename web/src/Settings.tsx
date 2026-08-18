@@ -58,15 +58,14 @@ export default function Settings() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [weightError, setWeightError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  // null (explicitly cleared) and undefined (never set) both render as an empty field.
+  // Declared before the state below, which calls it from its initializer on first render.
+  const num = (v: number | null | undefined) => (v === undefined || v === null ? "" : String(v));
   // Weight lives beside the numeric goals but doesn't share their validation: the target
   // is optional (blank means "just track it, don't aim at a number") and the unit is a choice.
-  const [weightTarget, setWeightTarget] = useState<string>(() => {
-    const t = getGoals().weight_target;
-    return t === undefined ? "" : String(t);
-  });
+  const [weightTarget, setWeightTarget] = useState<string>(() => num(getGoals().weight_target));
   const [weightUnit, setWeightUnit] = useState<WeightUnit>(() => getGoals().weight_unit);
   const [distanceUnit, setDistanceUnit] = useState<"mi" | "km">(() => getGoals().distance_unit);
-  const num = (v: number | undefined) => (v === undefined ? "" : String(v));
   const [sleepTarget, setSleepTarget] = useState<string>(() => num(getGoals().sleep_target));
   const [distanceTarget, setDistanceTarget] = useState<string>(() => num(getGoals().distance_target));
 
@@ -76,7 +75,7 @@ export default function Settings() {
   useEffect(() => {
     if (!dirty) {
       setForm(toForm(stored));
-      setWeightTarget(stored.weight_target === undefined ? "" : String(stored.weight_target));
+      setWeightTarget(num(stored.weight_target));
       setWeightUnit(stored.weight_unit);
       setDistanceUnit(stored.distance_unit);
       setSleepTarget(num(stored.sleep_target));
@@ -125,11 +124,15 @@ export default function Settings() {
       }
     }
 
-    // A blank weight target is valid and means "no goal weight" - only a non-blank
-    // value that isn't a sensible number is an error.
+    // A blank optional target must be SENT as null, not omitted. Omitting it means "leave
+    // unchanged" on the server, so blanking the field used to look like it worked - the
+    // form cleared, "Saved" appeared - and the old goal line stayed on every chart and
+    // repopulated on the next load.
     let weightProblem: string | null = null;
     const rawTarget = weightTarget.trim();
-    if (rawTarget !== "") {
+    if (rawTarget === "") {
+      next.weight_target = null;
+    } else {
       const t = Number(rawTarget);
       const maxWeight = weightUnit === "kg" ? 454 : 1000;
       if (!Number.isFinite(t) || t <= 0) {
@@ -140,10 +143,13 @@ export default function Settings() {
         next.weight_target = Math.round(t * 10) / 10;
       }
     }
-    // Both optional: blank means "no target", any other non-number is an error.
+    // Both optional: blank clears the target, any other non-number is an error.
     for (const [raw, key, max] of [[sleepTarget, "sleep_target", 24], [distanceTarget, "distance_target", 200]] as const) {
       const t = raw.trim();
-      if (t === "") continue;
+      if (t === "") {
+        (next as any)[key] = null;
+        continue;
+      }
       const n = Number(t);
       if (!Number.isFinite(n) || n <= 0 || n > max) {
         weightProblem = weightProblem ?? `${key === "sleep_target" ? "Sleep" : "Distance"} goal needs a number up to ${max}, or leave it blank`;

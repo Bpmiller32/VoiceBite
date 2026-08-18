@@ -26,7 +26,14 @@ export type NutrientTotals = { [K in NutrientKey]: number };
 /** How many entries contributed a known value to each total. */
 export type NutrientCoverage = { [K in NutrientKey]: number };
 
-export type EntrySource = "claude_estimate" | "water" | "gpt_estimate" | "usda";
+export type EntrySource =
+  | "claude_estimate"
+  | "grounded"
+  | "pantry"
+  | "manual"
+  | "water"
+  | "gpt_estimate"
+  | "usda";
 
 export interface ParsedFood {
   name: string;
@@ -44,7 +51,34 @@ export interface FoodEntry {
   batch_id?: string;
   logged_at?: string;
   parsed?: ParsedFood;
+  /**
+   * How these numbers were produced, as opposed to what they are.
+   *
+   * This is what turns the confirm screen from a list of numbers into something you can
+   * actually judge: whether a figure was read off a manufacturer's label, copied from a
+   * third-party database, scaled from something you verified earlier, or reasoned out -
+   * and what the model assumed to get there.
+   */
+  estimate?: EstimateMeta;
   provenance?: { fdc_id?: number; fdc_description?: string };
+}
+
+export type GramsBasis = "label_serving" | "typical_portion" | "guess" | "none";
+export type EstimateBasis = "model_estimate" | "reference_database" | "published_label";
+
+export interface EstimateMeta {
+  brand?: string;
+  grams?: number;
+  grams_basis?: GramsBasis;
+  basis?: EstimateBasis;
+  confidence?: "high" | "medium" | "low";
+  /** A conversion or judgement worth checking, in one sentence. */
+  assumptions?: string;
+  source_url?: string;
+  source_title?: string;
+  pantry_key?: string;
+  /** Arithmetic contradictions found at write time. */
+  violations?: string[];
 }
 
 /** One submission: the raw text and what it produced. Powers "you said X, we logged Y". */
@@ -88,6 +122,16 @@ export interface LogPreview {
   };
   existingEntries: number;
   existingCalories: number;
+  /** What this log cost in Anthropic API spend. Absent on older server builds. */
+  cost?: LogCostSummary;
+}
+
+export interface LogCostSummary {
+  usd: number;
+  inputTokens: number;
+  outputTokens: number;
+  webSearches: number;
+  calls: Array<{ method: string; usd: number; inputTokens: number; outputTokens: number; webSearches: number }>;
 }
 
 export interface ConfirmResult {
@@ -161,9 +205,15 @@ export interface Goals {
   sugar_g: number;
   water_ml: number;
   /** Optional targets. Blank means "track it, don't aim at a number". */
-  weight_target?: number;
-  distance_target?: number;
-  sleep_target?: number;
+  // Optional targets: "track it, don't aim at a number".
+  //
+  // `null` is meaningful on the way OUT - it is how the client says "clear this goal", as
+  // distinct from omitting the field, which means "leave it unchanged". The server only
+  // ever sends a number or omits the key, so readers should use `?? fallback`, which
+  // handles both.
+  weight_target?: number | null;
+  distance_target?: number | null;
+  sleep_target?: number | null;
   /** Display units. Storage keeps whatever was entered. */
   weight_unit: WeightUnit;
   distance_unit: "mi" | "km";

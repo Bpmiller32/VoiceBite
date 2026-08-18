@@ -9,7 +9,9 @@
     "dev:cli": "tsx watch src/cli.ts",
     "dev:server": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
-    "set-password": "tsx src/set-password.ts"
+    "set-password": "tsx src/set-password.ts",
+    "eval": "tsx src/eval/run.ts",
+    "backfill": "tsx src/backfill.ts"
   },
   "engines": {
     "node": ">=20"

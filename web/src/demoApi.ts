@@ -206,7 +206,9 @@ export const demoApi = {
     };
   },
 
-  estimate: async (food: ParsedFood): Promise<{ parsed: ParsedFood; nutrients: Nutrients }> => {
+  // `ref` is accepted and ignored: demo data has no stored batches to recover a
+  // transcript from, and the signature has to match the real api.
+  estimate: async (food: ParsedFood, _ref?: { date: string; entryId: string }): Promise<{ parsed: ParsedFood; nutrients: Nutrients }> => {
     // Re-uses the same open parse endpoint rather than adding a second one.
     const { entries } = await parseText(`${food.quantity} ${food.unit} of ${food.name}`);
     if (entries.length === 0) throw new DemoError(422, "no_food_found", "Couldn't estimate that.");

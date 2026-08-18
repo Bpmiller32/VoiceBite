@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "items": {
+    "protein-pastry-brown-sugar-cinnamon": {
+      "key": "protein-pastry-brown-sugar-cinnamon",
+      "display_name": "Protein Pastry (Brown Sugar Cinnamon)",
+      "aliases": [
+        "protein pastry",
+        "brown sugar cinnamon protein pastry"
+      ],
+      "serving_label": "1 pastry",
+      "serving_grams": 61,
+      "servings_per_container": 1,
+      "per_serving": {
+        "calories": 200,
+        "protein_g": 20,
+        "fat_g": 5,
+        "carbs_g": 24,
+        "fiber_g": 8,
+        "sugar_g": 2,
+        "saturated_fat_g": 2,
+        "vitamin_a_mcg": null,
+        "vitamin_c_mg": null,
+        "vitamin_d_mcg": null,
+        "vitamin_e_mg": null,
+        "vitamin_k_mcg": null,
+        "vitamin_b12_mcg": null,
+        "vitamin_b6_mg": null,
+        "folate_mcg": null,
+        "thiamin_mg": null,
+        "riboflavin_mg": null,
+        "niacin_mg": null,
+        "calcium_mg": 40,
+        "iron_mg": 1.8,
+        "magnesium_mg": null,
+        "potassium_mg": null,
+        "sodium_mg": 210,
+        "zinc_mg": null,
+        "selenium_mcg": null,
+        "phosphorus_mg": null,
+        "cholesterol_mg": null,
+        "caffeine_mg": 0,
+        "alcohol_g": 0
+      },
+      "source_url": "https://example.com/protein-pastry",
+      "source_title": "Brown Sugar Cinnamon Protein Pastry",
+      "source_tier": "manufacturer",
+      "verified_by": "claude",
+      "verified_at": "2026-05-05T19:40:11.000Z",
+      "log_count": 1
+    }
+  },
+  "misses": {}
+}

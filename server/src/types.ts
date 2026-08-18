@@ -59,10 +59,61 @@ export type NutrientTotals = { [K in NutrientKey]: number };
 export type NutrientCoverage = { [K in NutrientKey]: number };
 
 // Where a food entry's nutrient data came from.
-// "claude_estimate" = Claude estimated it, "water" = plain water bypass.
+//
+//   claude_estimate - Claude estimated it from its own knowledge
+//   grounded        - Claude read published nutrition facts for this exact product
+//   pantry          - scaled from a stored reference the user has already verified
+//   manual          - the user typed the numbers in; no model was involved
+//   water           - plain water bypass, the one case where 29 zeros are genuinely true
+//
 // "gpt_estimate" and "usda" are legacy sources from earlier versions of this app -
 // 24 of the 226 historical entries carry them, so the union has to admit them.
-export type EntrySource = "claude_estimate" | "water" | "gpt_estimate" | "usda";
+//
+// This distinction is load-bearing for measurement, not decoration: without it there is
+// no way to ask "how accurate is the estimator" separately from "how accurate are the
+// numbers on disk", because hand-typed values and model output look identical.
+export type EntrySource =
+  | "claude_estimate"
+  | "grounded"
+  | "pantry"
+  | "manual"
+  | "water"
+  | "gpt_estimate"
+  | "usda";
+
+/** Where a gram figure came from. Only a real label makes energy density checkable. */
+export type GramsBasis = "label_serving" | "typical_portion" | "guess" | "none";
+
+/** How an item's numbers were arrived at, in increasing order of trust. */
+export type EstimateBasis = "model_estimate" | "reference_database" | "published_label";
+
+/**
+ * Everything we know about HOW an entry's numbers were produced, as opposed to what they
+ * are. Kept as one nested object rather than a dozen top-level fields for a specific
+ * reason: `normalizeDayLog` rebuilds every entry from an explicit field whitelist, and it
+ * runs on every DELETE and PUT. A new top-level field that nobody added to that list is
+ * silently erased from the whole day the next time any entry in it is touched. One
+ * whitelist entry for this object means anything added here survives automatically.
+ */
+export interface EstimateMeta {
+  /** Brand, chain or manufacturer as it markets itself. */
+  brand?: string;
+  /** Total edible mass of the serving described, in grams. */
+  grams?: number;
+  grams_basis?: GramsBasis;
+  basis?: EstimateBasis;
+  /** How tightly the model would bet on the calorie figure. */
+  confidence?: "high" | "medium" | "low";
+  /** A conversion or judgement the user should check, in one sentence. */
+  assumptions?: string;
+  /** Set when the numbers were read off a published source. */
+  source_url?: string;
+  source_title?: string;
+  /** Set when the numbers were scaled from a stored pantry reference. */
+  pantry_key?: string;
+  /** Arithmetic contradictions found by verify.ts at write time, if any. */
+  violations?: string[];
+}
 
 // A single food entry ready to be saved - parsed food + its nutrient data
 export interface FoodEntry {
@@ -85,6 +136,8 @@ export interface FoodEntry {
   // The structured parse that produced this entry, kept so re-estimating an entry
   // doesn't have to reverse-engineer quantity/unit out of the display string
   parsed?: ParsedFood;
+  // How these numbers were produced. See EstimateMeta.
+  estimate?: EstimateMeta;
   // Legacy provenance from the retired USDA FoodData Central lookup
   provenance?: { fdc_id?: number; fdc_description?: string };
 }
@@ -158,6 +211,17 @@ export interface Goals {
 // because it is an enum, not a positive number.
 export const GOAL_KEYS: Array<keyof Goals> = [
   "calories", "protein_g", "carbs_g", "fat_g", "sodium_mg", "sugar_g", "water_ml",
+  "weight_target", "distance_target", "sleep_target",
+];
+
+/**
+ * The goals that are allowed to have no value at all.
+ *
+ * "Track it, don't aim at a number" is a real state for weight, distance and sleep, so
+ * these can be cleared by sending null. The rest are required: a calorie goal of nothing
+ * makes every progress ring divide by zero, so blanking one means "leave it unchanged".
+ */
+export const OPTIONAL_GOAL_KEYS: Array<keyof Goals> = [
   "weight_target", "distance_target", "sleep_target",
 ];
 
@@ -303,6 +367,24 @@ export interface LogPreviewResponse {
   // What's already logged for this day, so the UI can warn before appending
   existingEntries: number;
   existingCalories: number;
+  /**
+   * What this log cost in Anthropic API spend, in USD.
+   *
+   * Reported per log rather than only in aggregate because the range is wide and the
+   * reason is invisible: a food already in your library is a single parse call, while a
+   * new branded item adds a published-label lookup that can cost twenty times as much.
+   * Seeing the figure attached to the log that caused it is what makes that legible.
+   */
+  cost?: LogCostSummary;
+}
+
+export interface LogCostSummary {
+  usd: number;
+  inputTokens: number;
+  outputTokens: number;
+  webSearches: number;
+  /** Per-call breakdown, so an expensive log can be explained rather than just reported. */
+  calls: Array<{ method: string; usd: number; inputTokens: number; outputTokens: number; webSearches: number }>;
 }
 
 // What the HTTP server sends back after POST /confirm/:sessionId

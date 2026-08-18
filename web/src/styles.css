@@ -1089,3 +1089,75 @@ a.btn:hover { text-decoration: none; }
   .mic-pulse { animation: none; opacity: 0.35; }
   .skeleton { animation: none; background: var(--surface-2); }
 }
+
+/* ── Review provenance ───────────────────────────────────────────────────
+   Where a row's numbers came from. Deliberately quiet: the common case is an
+   ordinary estimate and should not shout, while the two cases worth a second
+   look - third-party data and a stated assumption - are the ones that read. */
+.provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 2px;
+}
+.provenance a { text-decoration: underline; text-underline-offset: 2px; }
+.provenance-note {
+  flex-basis: 100%;
+  line-height: 1.4;
+}
+.provenance-note.warn { color: var(--danger, #b4442f); }
+.badge-ok { background: var(--ok-bg, #e2efe9); color: var(--ok, #1f6f52); }
+.badge-warn { background: var(--warn-bg, #f6ecd9); color: var(--warn, #8a6216); }
+
+/* Collapsed by default: 10 more numeric inputs per row is a chore, not an
+   affordance. Open it only when you actually have the packet in your hand. */
+.more-nutrients > summary {
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: none;
+}
+.more-nutrients > summary::-webkit-details-marker { display: none; }
+.more-nutrients > summary::before { content: "＋ "; }
+.more-nutrients[open] > summary::before { content: "－ "; }
+
+/* Past the server's 80s deadline the bar has nothing honest left to measure, so it
+   sweeps instead of sitting full. A motionless full bar reads as a hang. */
+.bar-fill-indeterminate {
+  width: 35%;
+  animation: bar-sweep 1.4s ease-in-out infinite;
+}
+@keyframes bar-sweep {
+  0%   { margin-left: 0%; }
+  50%  { margin-left: 65%; }
+  100% { margin-left: 0%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar-fill-indeterminate { animation: none; width: 100%; opacity: 0.55; }
+}
+
+/* ── Per-log API cost ────────────────────────────────────────────────────
+   Quiet by default and expandable. The headline figure is what you budget
+   against; the breakdown answers "why was that one expensive", which is
+   almost always a published-label lookup for a food not yet in the library. */
+.cost-note { margin-top: -4px; }
+.btn-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.btn-link:hover { text-decoration: underline; }
+.cost-breakdown {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--rule, #e3e6e5);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cost-row { justify-content: space-between; gap: 12px; }
+.cost-total { padding-top: 3px; border-top: 1px solid var(--rule, #e3e6e5); }

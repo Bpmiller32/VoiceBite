@@ -122,7 +122,7 @@ export default function TodayScreen({ date, onDateChange, refreshKey }: TodayScr
     setActionError(null);
     setBusyId(entry.id);
     try {
-      const { nutrients } = await api.estimate(parsedFromEntry(entry));
+      const { nutrients } = await api.estimate(parsedFromEntry(entry), { date: forDate, entryId: entry.id });
       if (dateRef.current !== forDate) return;
       const res = await api.updateEntry(forDate, entry.id, { nutrients });
       if (dateRef.current !== forDate) return;
@@ -149,7 +149,7 @@ export default function TodayScreen({ date, onDateChange, refreshKey }: TodayScr
     try {
       for (const entry of entries) {
         setBusyId(entry.id);
-        const { nutrients } = await api.estimate(parsedFromEntry(entry));
+        const { nutrients } = await api.estimate(parsedFromEntry(entry), { date: forDate, entryId: entry.id });
         if (dateRef.current !== forDate) return;
         const res = await api.updateEntry(forDate, entry.id, { nutrients });
         if (dateRef.current !== forDate) return;
@@ -1254,7 +1254,18 @@ function dayLabel(date: string, today: string): string {
   });
 }
 
+/**
+ * A badge only where the source tells you something you'd act on.
+ *
+ * "Claude estimated this" is the unremarkable default and gets no badge - marking every
+ * row would just be noise. The two that matter are the ones that are *better* than an
+ * estimate (read off a label, or a value you verified yourself), because those are the
+ * rows you can stop double-checking.
+ */
 function sourceBadge(source: FoodEntry["source"]): string | null {
+  if (source === "grounded") return "LABEL";
+  if (source === "pantry") return "SAVED";
+  if (source === "manual") return "TYPED";
   if (source === "gpt_estimate") return "GPT";
   if (source === "usda") return "USDA";
   return null;

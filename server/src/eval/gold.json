@@ -1,0 +1,255 @@
+[
+  {
+    "match": "legendary foods protein pastry",
+    "display_name": "Legendary Foods Protein Pastry (Brown Sugar Cinnamon)",
+    "expected": {
+      "calories": 180,
+      "protein_g": 20,
+      "fat_g": 8,
+      "carbs_g": 22,
+      "fiber_g": 9,
+      "sugar_g": 0,
+      "saturated_fat_g": 1.5,
+      "calcium_mg": 325,
+      "potassium_mg": 94,
+      "sodium_mg": 370,
+      "cholesterol_mg": 5
+    },
+    "source_url": "https://www.eatlegendary.com/products/brown-sugar-protein-pastry",
+    "holdout": true
+  },
+  {
+    "match": "mcdonald s bacon egg and cheese mcgriddle",
+    "display_name": "McDonald's Bacon, Egg & Cheese McGriddles",
+    "expected": {
+      "calories": 430,
+      "protein_g": 19,
+      "fat_g": 22,
+      "carbs_g": 43
+    },
+    "source_url": "https://www.mcdonalds.com/us/en-us/product/bacon-egg-cheese-mcgriddles.html",
+    "holdout": false
+  },
+  {
+    "match": "almonds",
+    "display_name": "Almonds, raw (USDA)",
+    "expected": {
+      "calories": 579,
+      "protein_g": 21.2,
+      "fat_g": 49.9,
+      "carbs_g": 21.6,
+      "fiber_g": 12.5,
+      "sugar_g": 4.4,
+      "saturated_fat_g": 3.8,
+      "vitamin_a_mcg": 0,
+      "vitamin_c_mg": 0,
+      "vitamin_d_mcg": 0,
+      "vitamin_e_mg": 25.6,
+      "vitamin_k_mcg": 0,
+      "vitamin_b12_mcg": 0,
+      "vitamin_b6_mg": 0.14,
+      "folate_mcg": 44,
+      "thiamin_mg": 0.21,
+      "riboflavin_mg": 1.1,
+      "niacin_mg": 3.6,
+      "calcium_mg": 269,
+      "iron_mg": 3.7,
+      "magnesium_mg": 270,
+      "potassium_mg": 733,
+      "sodium_mg": 1,
+      "zinc_mg": 3.1,
+      "selenium_mcg": 4.1,
+      "phosphorus_mg": 481,
+      "cholesterol_mg": 0
+    },
+    "source_url": "https://tools.myfooddata.com/nutrition-facts/170567/100g",
+    "holdout": false
+  },
+  {
+    "match": "chick fil a chick n minis",
+    "display_name": "Chick-fil-A Chick-n-Minis (4 ct)",
+    "expected": {
+      "calories": 360,
+      "protein_g": 20,
+      "fat_g": 13,
+      "carbs_g": 41,
+      "fiber_g": 2,
+      "sugar_g": 8,
+      "saturated_fat_g": 4,
+      "sodium_mg": 1060,
+      "cholesterol_mg": 60
+    },
+    "source_url": "https://www.chick-fil-a.com/menu/breakfast/4-ct-chick-fil-a-chick-n-minis",
+    "holdout": true
+  },
+  {
+    "match": "chick fil a coke float",
+    "display_name": "Chick-fil-A Frosted Coke",
+    "expected": {
+      "calories": 320,
+      "protein_g": 7,
+      "fat_g": 7,
+      "carbs_g": 60
+    },
+    "source_url": "https://www.chick-fil-a.com/menu/breakfast/frosted-coke",
+    "holdout": false
+  },
+  {
+    "match": "coca cola",
+    "display_name": "Coca-Cola Classic (Original Taste), 12 fl oz can",
+    "expected": {
+      "calories": 140,
+      "protein_g": 0,
+      "fat_g": 0,
+      "carbs_g": 39
+    },
+    "source_url": "https://www.eatthismuch.com/calories/cola-original-taste-1598962",
+    "holdout": false
+  },
+  {
+    "match": "raising cane s crinkle cut fries",
+    "display_name": "Raising Cane's Crinkle-Cut Fries (regular)",
+    "expected": {
+      "calories": 390,
+      "protein_g": 5,
+      "fat_g": 19,
+      "carbs_g": 49
+    },
+    "source_url": "https://fastfoodnutrition.org/raising-canes/crinkle-cut-fries",
+    "holdout": true
+  },
+  {
+    "match": "mountain dew",
+    "display_name": "Mountain Dew (20 fl oz bottle)",
+    "expected": {
+      "calories": 290,
+      "protein_g": 0,
+      "fat_g": 0,
+      "carbs_g": 77
+    },
+    "source_url": "https://foods.fatsecret.com/calories-nutrition/mountain-dew/mountain-dew-(20-oz)",
+    "holdout": false
+  },
+  {
+    "match": "cinnamon toast crunch treats bar king size",
+    "display_name": "Cinnamon Toast Crunch Treats Bar, King Size",
+    "expected": {
+      "calories": 250,
+      "protein_g": 2,
+      "fat_g": 7,
+      "carbs_g": 45,
+      "fiber_g": 1,
+      "sugar_g": 21,
+      "saturated_fat_g": 3,
+      "vitamin_d_mcg": 2,
+      "calcium_mg": 260,
+      "iron_mg": 3,
+      "potassium_mg": 0,
+      "sodium_mg": 210,
+      "cholesterol_mg": 0
+    },
+    "source_url": "https://www.eatthismuch.com/calories/treat-bar-cinnamon-king-size-3108060",
+    "holdout": false
+  },
+  {
+    "match": "iced latte",
+    "display_name": "Starbucks Iced Caffè Latte, Grande (16 fl oz, 2% milk)",
+    "expected": {
+      "calories": 130,
+      "protein_g": 8,
+      "fat_g": 5,
+      "carbs_g": 13,
+      "fiber_g": 0,
+      "sugar_g": 11,
+      "saturated_fat_g": 2.5,
+      "sodium_mg": 115,
+      "cholesterol_mg": 20
+    },
+    "source_url": "https://fastfoodnutrition.org/starbucks/iced-caffe-latte-with-2-milk/grande",
+    "holdout": true
+  },
+  {
+    "match": "chick fil a hash browns",
+    "display_name": "Chick-fil-A Hash Browns",
+    "expected": {
+      "calories": 270,
+      "protein_g": 3,
+      "fat_g": 18,
+      "carbs_g": 23,
+      "fiber_g": 3,
+      "sugar_g": 0,
+      "saturated_fat_g": 2.5,
+      "sodium_mg": 440,
+      "cholesterol_mg": 0
+    },
+    "source_url": "https://www.chick-fil-a.com/menu/breakfast/hash-browns",
+    "holdout": false
+  },
+  {
+    "match": "chick fil a 8 count nuggets",
+    "display_name": "Chick-fil-A Nuggets (8 ct)",
+    "expected": {
+      "calories": 250,
+      "protein_g": 27,
+      "fat_g": 11,
+      "carbs_g": 11,
+      "fiber_g": 0,
+      "sugar_g": 1,
+      "saturated_fat_g": 2.5,
+      "sodium_mg": 1210,
+      "cholesterol_mg": 85
+    },
+    "source_url": "https://www.chick-fil-a.com/nutrition-allergens",
+    "holdout": false
+  },
+  {
+    "match": "mcdonald s hash brown",
+    "display_name": "McDonald's Hash Browns",
+    "expected": {
+      "calories": 140,
+      "protein_g": 2,
+      "fat_g": 8,
+      "carbs_g": 18,
+      "fiber_g": 2,
+      "sugar_g": 0,
+      "saturated_fat_g": 1,
+      "calcium_mg": 0,
+      "potassium_mg": 33,
+      "sodium_mg": 310,
+      "cholesterol_mg": 0
+    },
+    "source_url": "https://www.calorieking.com/us/en/foods/f/calories-in-breakfast-hash-browns/jbM3yN9bRtu66cW2qr1b-A",
+    "holdout": true
+  },
+  {
+    "match": "pepsi",
+    "display_name": "Pepsi (10 fl oz)",
+    "expected": {
+      "calories": 130,
+      "protein_g": 0,
+      "fat_g": 0,
+      "carbs_g": 34
+    },
+    "source_url": "https://foods.fatsecret.com/calories-nutrition/bjs-restaurant-brewhouse/pepsi",
+    "holdout": false
+  },
+  {
+    "match": "mcdonald s medium iced coffee with vanilla",
+    "display_name": "McDonald's McCafé Vanilla Iced Coffee (Medium)",
+    "expected": {
+      "calories": 170,
+      "protein_g": 3,
+      "fat_g": 7,
+      "carbs_g": 26,
+      "fiber_g": 0,
+      "sugar_g": 23,
+      "saturated_fat_g": 4.5,
+      "calcium_mg": 40,
+      "iron_mg": 0,
+      "sodium_mg": 65,
+      "cholesterol_mg": 25
+    },
+    "source_url": "https://www.calorieking.com/us/en/foods/f/calories-in-beverages-iced-french-vanilla-coffee-with-light-cream-french-vanilla-syrup-medium/lGd-xkWCQA-hdcBZUymGxA",
+    "holdout": false
+  }
+]

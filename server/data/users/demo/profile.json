@@ -1,0 +1,17 @@
+{
+  "userId": "demo",
+  "goals": {
+    "calories": 2000,
+    "protein_g": 150,
+    "carbs_g": 200,
+    "fat_g": 65,
+    "sodium_mg": 2300,
+    "sugar_g": 50,
+    "water_ml": 2500,
+    "sleep_target": 8,
+    "distance_target": 5,
+    "weight_target": 165,
+    "weight_unit": "lb",
+    "distance_unit": "mi"
+  }
+}

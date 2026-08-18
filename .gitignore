@@ -1,7 +1,36 @@
-/server/data/users/billy/food
-/web/dist
-server/data/.DS_Store
-server/data/users/.DS_Store
-server/.DS_Store
+# Dependencies
+node_modules/
+
+# Secrets. server/.env holds ANTHROPIC_API_KEY, AUTH_SECRET and AUTH_PASSWORD_HASH.
+# Nothing here matches .env.example or web/.env.production - those carry no secrets and
+# are tracked on purpose.
+.env
+.env.local
+
+# Build output
+web/dist/
+*.tsbuildinfo
+
+# Firebase deploy cache
+web/.firebase/
+
+# Runtime logs
+server/logs/
+*.log
+
+# Real user data: food logs, weight/sleep readings, goals, the learned pantry and the
+# corrections journal. This is personal health data and it stays on the machine that
+# produced it. The committed exception is the synthetic `demo` user, which exists so a
+# fresh clone has something to read.
+/server/data/*
+!/server/data/users/
+/server/data/users/*
+!/server/data/users/demo/
+
+# Eval output. gold.json (the labelled corpus) is tracked, plus one scored run so the
+# shape of the output is visible without running it. Every other run is machine-local.
+/server/src/eval/results/*
+!/server/src/eval/results/final.json
+
+# macOS
 .DS_Store
-/web/.firebase

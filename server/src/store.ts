@@ -19,7 +19,7 @@ import fs from "fs";
 import path from "path";
 import {
   DayLog, FoodEntry, DaySummary, LogBatch, SCHEMA_VERSION, NUTRIENT_KEYS,
-  Goals, GOAL_KEYS, DEFAULT_GOALS,
+  Goals, GOAL_KEYS, OPTIONAL_GOAL_KEYS, DEFAULT_GOALS,
   MetricKey, MetricPoint, DayMetrics, MetricReading, METRICS, METRIC_KEYS, convertMetric,
 } from "./types";
 import { sumNutrients, sumWaterMl, sanitizeNutrients } from "./enricher";
@@ -44,6 +44,70 @@ export class ClientError extends Error {
 // Get the base data directory from the environment, default to ./data
 function getDataDir(): string {
   return process.env.DATA_DIR || "./data";
+}
+
+/**
+ * Write JSON atomically: temp file, fsync, rename over the target.
+ *
+ * rename() is atomic within a filesystem, so a reader either sees the whole old file or
+ * the whole new one. A bare writeFileSync that dies mid-write (crash, `pm2 restart`, power
+ * cut) leaves a truncated file - and because every store here reads before it writes, that
+ * makes the record permanently unreadable AND unwritable.
+ */
+export function writeJsonAtomic(filePath: string, data: unknown): void {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const fd = fs.openSync(tmpPath, "w");
+    try {
+      fs.writeFileSync(fd, JSON.stringify(data, null, 2), "utf-8");
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
+    throw err;
+  }
+}
+
+/**
+ * Resolve a path inside a user's data directory, refusing anything that escapes it.
+ * Every per-user file goes through here.
+ */
+export function userFilePath(userId: string, ...segments: string[]): string {
+  if (!isValidUserId(userId)) throw new ClientError(`Invalid userId: ${JSON.stringify(userId)}`, "invalid_user_id");
+  const root = path.resolve(getDataDir());
+  const filePath = path.resolve(path.join(root, "users", userId, ...segments));
+  if (!filePath.startsWith(root + path.sep)) {
+    throw new ClientError("Refusing to access a path outside the data directory", "invalid_path");
+  }
+  return filePath;
+}
+
+/**
+ * Move an unreadable file aside so its bytes survive, and the path becomes writable again.
+ *
+ * Every JSON store in this file is read-modify-write, so "return an empty default on a bad
+ * read" is not a safe fallback - the very next write persists that empty default over the
+ * real data. Day logs already did this; metrics.json and profile.json did not, which meant
+ * one EIO on an SD card could silently reduce four months of weigh-ins to a single reading
+ * with no error surfaced anywhere. Preserve first, then fall back.
+ */
+function quarantine(filePath: string, err: unknown, context: Record<string, unknown>): string | null {
+  const log = getLogger();
+  const dest = `${filePath}.corrupt-${Date.now()}`;
+  try {
+    fs.renameSync(filePath, dest);
+    log.error({ err, ...context, filePath, quarantine: dest }, "file is unreadable - quarantined");
+    return dest;
+  } catch {
+    // If we cannot even move it, do not let a later write clobber it. The throw is the
+    // safest outcome available: loud, and it leaves the bytes where they are.
+    log.error({ err, ...context, filePath }, "file is unreadable and could not be quarantined");
+    return null;
+  }
 }
 
 // A date must be a real calendar date in YYYY-MM-DD form.
@@ -93,10 +157,15 @@ function normalizeDayLog(raw: any, userId: string, date: string): DayLog {
       source: e?.source ?? "claude_estimate",
       nutrients: sanitizeNutrients(e?.nutrients),
     };
+    // NOTE: this is an explicit whitelist, and it runs on every DELETE and PUT via
+    // readDayLog -> buildDayLog -> writeDayLog. A field that is written to disk but not
+    // listed here is erased from the entire day the next time any entry in it is touched.
+    // Add new per-entry data inside `parsed` or `estimate`, which pass through wholesale.
     if (Number.isFinite(e?.water_ml)) entry.water_ml = e.water_ml;
     if (typeof e?.batch_id === "string") entry.batch_id = e.batch_id;
     if (typeof e?.logged_at === "string") entry.logged_at = e.logged_at;
     if (e?.parsed) entry.parsed = e.parsed;
+    if (e?.estimate && typeof e.estimate === "object") entry.estimate = e.estimate;
 
     // Legacy USDA provenance lived as loose top-level fields; tuck it away rather than drop it.
     if (e?.fdc_id !== undefined || e?.fdc_description !== undefined) {
@@ -150,20 +219,20 @@ export function readDayLog(userId: string, date: string): DayLog | null {
     throw err;
   }
 
+  // Parse and normalize are separated on purpose. Only a parse failure means the FILE is
+  // corrupt; a normalize failure is our bug, and quarantining the user's day because of it
+  // would turn a code defect into data loss.
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw);
-    const dayLog = normalizeDayLog(parsed, userId, date);
-    log.debug({ userId, date, entryCount: dayLog.entries.length, filePath }, "read day log");
-    return dayLog;
+    parsed = JSON.parse(raw);
   } catch (err) {
-    // Corrupt file: move it aside so the day becomes writable again, and report it loudly.
-    const quarantine = `${filePath}.corrupt-${Date.now()}`;
-    try {
-      fs.renameSync(filePath, quarantine);
-    } catch { /* if we can't move it, the error below is still the useful signal */ }
-    log.error({ err, userId, date, filePath, quarantine }, "day log is corrupt - quarantined");
+    quarantine(filePath, err, { userId, date });
     return null;
   }
+
+  const dayLog = normalizeDayLog(parsed, userId, date);
+  log.debug({ userId, date, entryCount: dayLog.entries.length, filePath }, "read day log");
+  return dayLog;
 }
 
 // Write (or overwrite) the day log file for a user, atomically.
@@ -398,7 +467,22 @@ export function sanitizeGoals(input: unknown, base: Goals = DEFAULT_GOALS): Goal
   const raw = input as Record<string, unknown>;
   for (const key of GOAL_KEYS) {
     const v = raw[key];
-    if (v === undefined || v === null || v === "") continue;
+
+    // Absent means "leave this one alone" - a partial update must not reset the rest.
+    if (v === undefined) continue;
+
+    // An explicit null or "" means "clear this target", and is only honoured for the
+    // optional ones. Without this branch an optional goal could be set but never unset:
+    // the value was skipped as unparseable, merged back over itself by writeGoals, and
+    // the UI reported "Saved" while the old goal line stayed on every chart.
+    // The required goals have no meaningful empty state - clearing calories would make
+    // every "percent of target" render as Infinity - so for those, blank still means
+    // "unchanged".
+    if (v === null || v === "") {
+      if (OPTIONAL_GOAL_KEYS.includes(key)) delete out[key];
+      continue;
+    }
+
     const n = typeof v === "number" ? v : Number(v);
     if (!Number.isFinite(n) || n <= 0) continue;
     (out[key] as number) = n;
@@ -411,14 +495,16 @@ export function sanitizeGoals(input: unknown, base: Goals = DEFAULT_GOALS): Goal
 // Read a user's goals. Missing or unreadable file means "never set them" - hand back the
 // defaults rather than failing, so a fresh install still renders every chart.
 export function readGoals(userId: string): Goals {
-  const log = getLogger();
   const filePath = getProfilePath(userId);
   if (!fs.existsSync(filePath)) return { ...DEFAULT_GOALS };
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     return sanitizeGoals(parsed?.goals ?? parsed);
   } catch (err) {
-    log.error({ err, userId, filePath }, "failed to read goals - falling back to defaults");
+    // Quarantine before falling back. writeGoals merges onto whatever this returns, so a
+    // silent fallback to defaults means the next Settings save permanently overwrites the
+    // real targets with DEFAULT_GOALS - and reports "Saved" while doing it.
+    quarantine(filePath, err, { userId });
     return { ...DEFAULT_GOALS };
   }
 }
@@ -473,11 +559,23 @@ function getMetricsPath(userId: string): string {
 type MetricsFile = { userId: string; entries: Record<string, DayMetrics> };
 
 function readMetricsFile(userId: string): MetricsFile {
-  const log = getLogger();
   const filePath = getMetricsPath(userId);
   if (!fs.existsSync(filePath)) return { userId, entries: {} };
+
+  let raw: string;
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch (err) {
+    // A read error is transient (EIO, EACCES), not corruption. Returning {} here would let
+    // the next writeMetric persist an empty file over the whole weight/sleep/distance
+    // history - the one dataset with no per-day granularity to recover from. Rethrow so
+    // the request fails visibly instead.
+    getLogger().error({ err, userId, filePath }, "failed to read metrics file");
+    throw err;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
     const entries: Record<string, DayMetrics> = {};
     for (const [date, raw] of Object.entries(parsed?.entries ?? {})) {
       if (!isValidDate(date)) continue;
@@ -497,7 +595,7 @@ function readMetricsFile(userId: string): MetricsFile {
     }
     return { userId, entries };
   } catch (err) {
-    log.error({ err, userId, filePath }, "failed to read metrics file");
+    quarantine(filePath, err, { userId });
     return { userId, entries: {} };
   }
 }

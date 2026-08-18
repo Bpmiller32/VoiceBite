@@ -168,7 +168,11 @@ function buildRows(from: string, to: string, days: DaySummary[]): Row[] {
       fatPct: share(fat, 9),
       sodium: knownTotal(day, "sodium_mg"),
       sugar: knownTotal(day, "sugar_g"),
-      water: day.daily_water_ml,
+      // Water is the one series with no coverage field to gate on, so it used to be the
+      // one series that still drew "unknown" as a real 0 - a 0 ml bar against a 3,000 ml
+      // goal line on almost every day, which reads as "you drank nothing" rather than
+      // "nothing was recorded". A day with entries but no hydration data is a gap.
+      water: day.daily_water_ml > 0 ? day.daily_water_ml : null,
       coverage: day.daily_coverage,
     };
   });

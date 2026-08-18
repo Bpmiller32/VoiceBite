@@ -1,0 +1,53 @@
+{
+  "userId": "demo",
+  "entries": {
+    "2026-05-07": {
+      "weight": {
+        "value": 178.4,
+        "unit": "lb",
+        "logged_at": "2026-05-07T14:02:10.000Z"
+      },
+      "sleep": {
+        "value": 7.25,
+        "unit": "h",
+        "logged_at": "2026-05-07T14:02:31.000Z"
+      }
+    },
+    "2026-05-06": {
+      "distance": {
+        "value": 3.4,
+        "unit": "mi",
+        "logged_at": "2026-05-06T23:11:02.000Z"
+      },
+      "sleep": {
+        "value": 6.0,
+        "unit": "h",
+        "logged_at": "2026-05-06T13:55:48.000Z"
+      }
+    },
+    "2026-05-05": {
+      "weight": {
+        "value": 179.1,
+        "unit": "lb",
+        "logged_at": "2026-05-05T13:48:19.000Z"
+      },
+      "distance": {
+        "value": 2.1,
+        "unit": "mi",
+        "logged_at": "2026-05-05T22:30:05.000Z"
+      },
+      "sleep": {
+        "value": 5.5,
+        "unit": "h",
+        "logged_at": "2026-05-05T13:48:02.000Z"
+      }
+    },
+    "2026-05-04": {
+      "distance": {
+        "value": 4.02,
+        "unit": "mi",
+        "logged_at": "2026-05-04T21:19:44.000Z"
+      }
+    }
+  }
+}

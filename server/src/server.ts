@@ -38,11 +38,26 @@ import {
 import { createSession, getSession, deleteSession, purgeExpiredSessions, sessionCount } from "./sessions";
 import { FoodEntry, DayLog, LogPreviewResponse, LogBatch, SCHEMA_VERSION } from "./types";
 import { requireAuth, requireOwnUser, verifyPassword, signToken, authConfigured } from "./auth";
+import { CostMeter } from "./cost";
+import { recordCorrection, teachPantryFromCorrection, diffNutrients } from "./corrections";
 
 const logger = initLogger("server");
 const startedAt = Date.now();
 
 const app = express();
+
+// Resolve the real client IP from the Cloudflare Tunnel's X-Forwarded-For.
+//
+// Without this, every internet request arrives from the tunnel on loopback and req.ip is
+// "::1" for all of them, so the rate limiter below has exactly one bucket per endpoint for
+// the entire internet. That was measured, not guessed - the one rate-limit event in the
+// log records the key verbatim as "POST:/demo/parse:::1". Two consequences: the demo cap
+// is shared by every visitor at once, and /auth/login's 8-per-15-minutes becomes a lever
+// anyone can pull to lock the owner out of his own food log.
+//
+// `1` trusts exactly one hop - cloudflared, the only thing in front of this process. Any
+// X-Forwarded-For a client sends itself sits further left in the chain and is ignored.
+app.set("trust proxy", 1);
 
 // CORS allow-list from ALLOWED_ORIGINS env (comma-separated), with a sensible default.
 // Note this is not a security control - curl and server-to-server calls have no Origin
@@ -104,23 +119,39 @@ app.use((req, res, next) => {
 // API per request, and the service is reachable from the public internet. The limits are
 // set well above any human usage pattern, so normal use never sees a 429.
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
-function rateLimit(max: number, windowMs = 60_000) {
+
+/**
+ * @param max        requests allowed per window
+ * @param windowMs   window length
+ * @param countWhen  when given, a request only consumes budget if this returns true for
+ *                   the final status code. Used by /auth/login so that succeeding at the
+ *                   password never counts against you - otherwise the limiter that exists
+ *                   to slow down guessing can equally well lock out the one person who
+ *                   knows the answer.
+ */
+function rateLimit(max: number, windowMs = 60_000, countWhen?: (statusCode: number) => boolean) {
   return (req: Request, res: Response, next: NextFunction) => {
     const key = `${req.method}:${req.path}:${req.ip ?? "unknown"}`;
     const now = Date.now();
     const bucket = rateBuckets.get(key);
+    const fresh = !bucket || now > bucket.resetAt;
 
-    if (!bucket || now > bucket.resetAt) {
-      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
-      return next();
-    }
-    if (bucket.count >= max) {
-      const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+    if (!fresh && bucket!.count >= max) {
+      const retryAfter = Math.ceil((bucket!.resetAt - now) / 1000);
       res.setHeader("Retry-After", String(retryAfter));
       (req as any).log?.warn({ key, max }, "rate limited");
       return res.status(429).json({ error: { code: "rate_limited", message: `Too many requests. Retry in ${retryAfter}s.` } });
     }
-    bucket.count++;
+
+    const charge = () => {
+      const b = rateBuckets.get(key);
+      if (!b || Date.now() > b.resetAt) rateBuckets.set(key, { count: 1, resetAt: Date.now() + windowMs });
+      else b.count++;
+    };
+
+    if (countWhen) res.on("finish", () => { if (countWhen(res.statusCode)) charge(); });
+    else charge();
+
     next();
   };
 }
@@ -169,7 +200,7 @@ app.get("/health", (_req, res) => {
 // POST /auth/login
 // Body: { password }
 // Rate-limited hard: this is the one endpoint where guessing is the attack.
-app.post("/auth/login", rateLimit(8, 15 * 60_000), (req, res) => {
+app.post("/auth/login", rateLimit(8, 15 * 60_000, (status) => status !== 200), (req, res) => {
   const reqLog = (req as any).log;
   const { password } = req.body ?? {};
 
@@ -222,7 +253,8 @@ app.post("/demo/parse", rateLimit(6, 60 * 60_000), wrap(async (req, res) => {
     return;
   }
 
-  const { entries } = await parseAndEnrich(text, reqLog);
+  // Deliberately no userId: demo traffic must not see, or write to, the owner's library.
+  const { entries } = await parseAndEnrich(text, { logger: reqLog });
   if (entries.length === 0) {
     res.status(422).json({ error: { code: "no_food_found", message: "I couldn't pick out any food from that." }, transcript: text });
     return;
@@ -269,7 +301,9 @@ app.post("/log", requireAuth, rateLimit(20), wrap(async (req, res) => {
   const existingCalories = existingLog ? Math.round(existingLog.daily_totals.calories) : 0;
 
   reqLog.info({ userId: user, date: logDate }, "parsing and estimating nutrition");
-  const { entries } = await parseAndEnrich(text, reqLog);
+  // One meter per request. Two logs can be in flight at once and their spend must not merge.
+  const meter = new CostMeter();
+  const { entries } = await parseAndEnrich(text, { logger: reqLog, userId: user, meter });
   reqLog.info({ userId: user, entryCount: entries.length }, "parsed and enriched entries");
 
   // A microphone produces silence, background noise, and non-food chatter. Without this,
@@ -301,9 +335,20 @@ app.post("/log", requireAuth, rateLimit(20), wrap(async (req, res) => {
     },
     existingEntries: existingCount,
     existingCalories,
+    cost: meter.total(),
   };
 
-  reqLog.info({ sessionId, totalCalories: preview.summary.totalCalories }, "preview ready");
+  reqLog.info(
+    {
+      sessionId,
+      totalCalories: preview.summary.totalCalories,
+      // Logged as well as returned, so spend is greppable per request and per day without
+      // re-deriving it from individual call records.
+      costUsd: preview.cost?.usd,
+      costBreakdown: preview.cost?.calls.map((c) => `${c.method}:$${c.usd.toFixed(4)}`).join(" "),
+    },
+    "preview ready",
+  );
   res.json(preview);
 }));
 
@@ -338,18 +383,58 @@ app.post("/confirm/:sessionId", requireAuth, wrap(async (req, res) => {
   let entriesToSave: FoodEntry[] = session.entries;
   if (Array.isArray(editedEntries)) {
     const allowed = new Map(session.entries.map((e) => [e.id, e]));
+    const keptIds = new Set<string>();
+
     entriesToSave = editedEntries
       .filter((e: any) => e && typeof e.id === "string" && allowed.has(e.id))
       .map((e: any) => {
         const original = allowed.get(e.id)!;
+        keptIds.add(original.id);
+        const nutrients = e.nutrients ? sanitizeNutrients(e.nutrients) : original.nutrients;
+
+        // Every edit here is the user overruling an estimate. That is the highest-value
+        // signal the app produces and it used to be discarded the moment it was applied.
+        const changed = diffNutrients(original.nutrients, nutrients);
+        if (changed) {
+          recordCorrection(user, {
+            ts: new Date().toISOString(),
+            date: session.date,
+            action: "edited_in_preview",
+            entry_id: original.id,
+            food_name: original.food_name,
+            transcript: session.transcript,
+            pantry_key: original.estimate?.pantry_key,
+            source: original.source,
+            changed,
+          });
+          // A corrected library item is pinned, so the fix survives to tomorrow.
+          teachPantryFromCorrection(user, original, nutrients);
+        }
+
         return {
           ...original,
           food_name: typeof e.food_name === "string" && e.food_name.trim() ? e.food_name.trim() : original.food_name,
           serving_description: typeof e.serving_description === "string" && e.serving_description.trim()
             ? e.serving_description.trim() : original.serving_description,
-          nutrients: e.nutrients ? sanitizeNutrients(e.nutrients) : original.nutrients,
+          nutrients,
         };
       });
+
+    // A dropped row is a judgement too - and the most common one. Two whole batches were
+    // deleted outright on 2026-08-12 with no record of what was wrong with them.
+    for (const original of session.entries) {
+      if (keptIds.has(original.id)) continue;
+      recordCorrection(user, {
+        ts: new Date().toISOString(),
+        date: session.date,
+        action: "dropped_in_preview",
+        entry_id: original.id,
+        food_name: original.food_name,
+        transcript: session.transcript,
+        pantry_key: original.estimate?.pantry_key,
+        source: original.source,
+      });
+    }
     if (entriesToSave.length === 0) {
       res.status(400).json({ error: { code: "no_entries", message: "Nothing left to save - all entries were removed." } });
       return;
@@ -391,13 +476,17 @@ app.post("/confirm/:sessionId", requireAuth, wrap(async (req, res) => {
 }));
 
 // POST /estimate
-// Body: { name: string, quantity?: number, unit?: string }
+// Body: { name: string, quantity?: number, unit?: string, userId?, date?, entryId? }
 // Re-estimate one food item and return its nutrients without saving anything.
 // This logic previously existed only inside the CLI, so the API was strictly less
 // capable than the terminal in exactly the "fix what it misheard" dimension.
+//
+// `date` + `entryId` are optional but worth sending: they let the server recover the
+// utterance this entry came from and hand it to the model. Re-estimating from the display
+// string alone throws away everything the user actually said - see EstimateOneOptions.
 app.post("/estimate", requireAuth, rateLimit(30), wrap(async (req, res) => {
   const reqLog = (req as any).log;
-  const { name, quantity, unit } = req.body ?? {};
+  const { name, quantity, unit, userId, date, entryId } = req.body ?? {};
 
   if (!name || typeof name !== "string" || !name.trim()) {
     res.status(400).json({ error: { code: "invalid_name", message: "Body must include a non-empty 'name'" } });
@@ -409,9 +498,39 @@ app.post("/estimate", requireAuth, rateLimit(30), wrap(async (req, res) => {
     unit: typeof unit === "string" && unit.trim() ? unit.trim().slice(0, 60) : "serving",
   };
 
-  const nutrients = await estimateOne(food, reqLog);
+  // Best-effort transcript recovery. A miss here is not an error - the endpoint has always
+  // worked without it, and a caller who has no entry to point at still gets an estimate.
+  const transcript = findTranscript(userId ?? DEFAULT_USER, date, entryId, reqLog);
+
+  const nutrients = await estimateOne(food, { transcript, logger: reqLog });
   res.json({ parsed: food, nutrients });
 }));
+
+/**
+ * Recover the utterance an entry came from, via entry.batch_id -> DayLog.batches[].
+ * Both halves of that link are already on disk; nothing used to follow it.
+ */
+function findTranscript(
+  userId: string,
+  date: unknown,
+  entryId: unknown,
+  log: any,
+): string | undefined {
+  if (!isValidUserId(userId) || !isValidDate(date) || typeof entryId !== "string") return undefined;
+  try {
+    const day = readDayLog(userId, date);
+    const entry = day?.entries.find((e) => e.id === entryId);
+    if (!entry?.batch_id) return undefined;
+    const transcript = day!.batches.find((b) => b.batch_id === entry.batch_id)?.transcript;
+    if (transcript) log?.info({ entryId, batchId: entry.batch_id }, "recovered transcript for re-estimate");
+    return transcript;
+  } catch (err) {
+    // Never fail a re-estimate because the lookup failed; it is an enrichment, not a
+    // requirement.
+    log?.warn({ err, date, entryId }, "could not recover transcript for re-estimate");
+    return undefined;
+  }
+}
 
 // GET    /metrics/:userId?from=&to=&metric=  - every reading, oldest first
 // PUT    /metrics/:userId/:date/:metric       - record or correct one: { value, unit? }
@@ -566,7 +685,7 @@ app.post("/log/:userId/:date/entries", requireAuth, requireOwnUser, validatePara
     food_name: body.food_name.trim().slice(0, 300),
     serving_description: typeof body.serving_description === "string" && body.serving_description.trim()
       ? body.serving_description.trim().slice(0, 120) : "1 serving",
-    source: isWater ? "water" : "claude_estimate",
+    source: isWater ? "water" : "manual",
     nutrients: isWater ? zeroNutrients() : sanitizeNutrients(body.nutrients),
     logged_at: new Date().toISOString(),
   };
@@ -596,6 +715,13 @@ app.delete("/log/:userId/:date/:entryId", requireAuth, requireOwnUser, validateP
   }
 
   const removed = existing.entries.splice(idx, 1)[0];
+  recordCorrection(userId, {
+    ts: new Date().toISOString(),
+    date, action: "deleted", entry_id: removed.id, food_name: removed.food_name,
+    transcript: findTranscript(userId, date, removed.id, reqLog),
+    pantry_key: removed.estimate?.pantry_key,
+    source: removed.source,
+  });
   // Rebuild rather than mutate, so totals, coverage and water are all recomputed together.
   const log = buildDayLog(userId, date, existing.entries, existing.batches);
   writeDayLog(log);
@@ -635,7 +761,21 @@ app.put("/log/:userId/:date/:entryId", requireAuth, requireOwnUser, validatePara
     // Merge onto the existing profile, then sanitize the result. Without the sanitize
     // step a PUT of {"calories": "abc"} lands as NaN and serializes to null on disk,
     // poisoning that day's total permanently.
-    entry.nutrients = sanitizeNutrients({ ...entry.nutrients, ...update.nutrients });
+    const before = entry.nutrients;
+    const after = sanitizeNutrients({ ...entry.nutrients, ...update.nutrients });
+    const changed = diffNutrients(before, after);
+    if (changed) {
+      recordCorrection(userId, {
+        ts: new Date().toISOString(),
+        date, action: "edited", entry_id: entry.id, food_name: entry.food_name,
+        transcript: findTranscript(userId, date, entry.id, reqLog),
+        pantry_key: entry.estimate?.pantry_key,
+        source: entry.source,
+        changed,
+      });
+      teachPantryFromCorrection(userId, entry, after);
+    }
+    entry.nutrients = after;
   }
   if (update.water_ml !== undefined) {
     entry.water_ml = Number.isFinite(update.water_ml) && update.water_ml >= 0 ? Math.round(update.water_ml) : undefined;
@@ -647,6 +787,48 @@ app.put("/log/:userId/:date/:entryId", requireAuth, requireOwnUser, validatePara
   reqLog.info({ userId, date, entryId }, "entry updated");
   res.json({ success: true, entry, log });
 });
+
+/**
+ * Recognise an Anthropic API failure and turn it into something actionable.
+ *
+ * These are the failures that are neither the caller's fault nor a bug in this code -
+ * they are account or service states only the owner can resolve, and saying so plainly
+ * is the whole value. Anything unrecognised returns null and stays opaque.
+ */
+function classifyUpstream(err: any): { status: number; code: string; message: string } | null {
+  const raw = typeof err?.message === "string" ? err.message : "";
+  const status = typeof err?.status === "number" ? err.status : 0;
+
+  if (/credit balance is too low/i.test(raw)) {
+    return {
+      status: 503,
+      code: "api_credit_exhausted",
+      message: "The Anthropic account this runs on is out of credit, so nothing can be estimated right now. Top it up at console.anthropic.com under Plans & Billing - your food wasn't saved, so just log it again afterwards.",
+    };
+  }
+  if (status === 401 || /authentication_error|invalid x-api-key/i.test(raw)) {
+    return {
+      status: 503,
+      code: "api_key_invalid",
+      message: "The Anthropic API key isn't being accepted. Check ANTHROPIC_API_KEY in server/.env, then restart with `pm2 restart VoiceBite`.",
+    };
+  }
+  if (status === 429 || /rate_limit_error/i.test(raw)) {
+    return {
+      status: 503,
+      code: "api_rate_limited",
+      message: "The Anthropic API is rate-limiting this account. Wait a minute and try again - nothing was saved.",
+    };
+  }
+  if (status === 529 || /overloaded_error/i.test(raw)) {
+    return {
+      status: 503,
+      code: "api_overloaded",
+      message: "The Anthropic API is overloaded right now. Try again in a moment - nothing was saved.",
+    };
+  }
+  return null;
+}
 
 // Unknown route - JSON, not Express's default HTML page.
 app.use((_req, res) => {
@@ -675,8 +857,28 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     res.status(err.status).json({ error: { code: err.code, message: err.message } });
     return;
   }
+  // Upstream failures get a message that says what actually happened.
+  //
+  // Hiding err.message keeps absolute paths and library internals off a public endpoint,
+  // which is right - but applied bluntly it also turned "your Anthropic credit balance is
+  // empty" into "Something went wrong on the server". That is the difference between a
+  // 10-second fix and an evening of debugging, and the user is the only person who can
+  // act on any of these. So the known upstream classes are named explicitly; everything
+  // else stays opaque.
+  const upstream = classifyUpstream(err);
+  if (upstream) {
+    res.status(upstream.status).json({
+      error: { code: upstream.code, message: upstream.message, requestId: (req as any).requestId },
+    });
+    return;
+  }
+
   res.status(500).json({
-    error: { code: "internal_error", message: err?.message || "Something went wrong on the server" },
+    error: {
+      code: "internal_error",
+      message: "Something went wrong on the server",
+      requestId: (req as any).requestId,
+    },
   });
 });
 
@@ -699,7 +901,11 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     logger.info({ signal }, "shutting down");
     server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 10_000).unref();
+    // Long enough to outlast a model call in flight. p90 for POST /log is ~19s today and
+    // grounded lookups are budgeted to 55s, so a 10s window meant `pm2 restart` routinely
+    // killed a request the user was standing there waiting for - and the session it would
+    // have created. 70s covers the worst case with headroom.
+    setTimeout(() => process.exit(0), 70_000).unref();
   });
 }
 

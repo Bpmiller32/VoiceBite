@@ -31,21 +31,41 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * How long to wait before giving up on a request.
+ *
+ * fetch has no default timeout, so without this a stalled connection hangs the screen
+ * forever with a spinner and no way out. 75s is deliberately just past the server's own
+ * 55s grounding budget - long enough that a slow lookup finishes, short enough to beat
+ * Cloudflare's ~100s origin timeout so the user sees our message rather than a 524.
+ */
+const REQUEST_TIMEOUT_MS = 95_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
+      signal: controller.signal,
       headers: {
         ...(init?.body ? { "content-type": "application/json" } : {}),
         ...authHeaders(),
         ...init?.headers,
       },
     });
-  } catch {
+  } catch (err) {
+    // Distinguish "we gave up waiting" from "the Pi is unreachable". Reporting a timeout
+    // as an offline server sends you to check the Pi, which is working fine and slow.
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(0, "timeout", "That took too long and I stopped waiting. Your food wasn't saved - try again.");
+    }
     // fetch only rejects on network failure, so this is "the Pi is unreachable"
     // rather than anything the server said.
     throw new ApiError(0, "network_error", "Can't reach the server. Is the Pi online?");
+  } finally {
+    clearTimeout(timer);
   }
 
   const text = await res.text();
@@ -102,11 +122,17 @@ const realApi = {
       body: JSON.stringify({ userId: USER, ...opts }),
     }),
 
-  /** Re-estimate one item without saving. Used to fix a bad row in the preview. */
-  estimate: (food: ParsedFood) =>
+  /**
+   * Re-estimate one item without saving. Used to fix a bad row in the preview.
+   *
+   * `ref` is optional but worth passing for an entry that is already saved: it lets the
+   * server recover the sentence this entry was parsed from and re-estimate against what
+   * you actually said, rather than against the display string it generated.
+   */
+  estimate: (food: ParsedFood, ref?: { date: string; entryId: string }) =>
     request<{ parsed: ParsedFood; nutrients: Nutrients }>("/estimate", {
       method: "POST",
-      body: JSON.stringify(food),
+      body: JSON.stringify({ ...food, ...ref }),
     }),
 
   day: (date: string) =>

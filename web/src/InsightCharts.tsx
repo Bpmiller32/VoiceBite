@@ -259,7 +259,7 @@ export function WeightAgainst({ days, points, goals, against }: {
               { label: "Weight", value: `${r.weight} ${wUnit}` },
             ]} />;
           }} />
-          {spec.reference !== undefined && (
+          {spec.reference != null && (
             <ReferenceLine yAxisId="other" y={spec.reference} stroke={GRID} strokeDasharray="4 4" />
           )}
           <Bar yAxisId="other" dataKey="other" fill={spec.color} maxBarSize={22} isAnimationActive animationDuration={480} animationEasing="ease-out" />

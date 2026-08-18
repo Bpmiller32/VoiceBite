@@ -1,0 +1,337 @@
+{
+  "tag": "final",
+  "measuredAt": "2026-08-13T13:34:16.218Z",
+  "from": null,
+  "to": null,
+  "days": 33,
+  "atwater": {
+    "entries": 190,
+    "p50": 1.03,
+    "p90": 8.8,
+    "over5pct": 34,
+    "over10pct": 13,
+    "over20pct": 3,
+    "impossible": 2,
+    "worst": [
+      {
+        "name": "banana chips (pure banana) (9 serving)",
+        "calories": 1350,
+        "residualPct": 37.6
+      },
+      {
+        "name": "Fairlife protein drink strawberry flavor (26 g)",
+        "calories": 100,
+        "residualPct": 33.5
+      },
+      {
+        "name": "Fairlife Strawberry Protein Shake (42g protein) (1 serving)",
+        "calories": 170,
+        "residualPct": 30.9
+      },
+      {
+        "name": "Legendary Foods protein pastry (1 serving)",
+        "calories": 190,
+        "residualPct": 17.4
+      },
+      {
+        "name": "High Noon hard seltzer (3 fl oz)",
+        "calories": 36,
+        "residualPct": 16.4
+      },
+      {
+        "name": "Huel Ready-to-Drink (400 calorie bottle) (1 bottle (500 ml))",
+        "calories": 400,
+        "residualPct": 16
+      },
+      {
+        "name": "Legendary Foods breakfast pastry (1 serving)",
+        "calories": 200,
+        "residualPct": 14.5
+      },
+      {
+        "name": "Legendary Foods protein pastry (1 serving)",
+        "calories": 200,
+        "residualPct": 13.5
+      }
+    ]
+  },
+  "selfAgreement": {
+    "groups": 27,
+    "stableGroups": 6,
+    "unstableGroups": 21,
+    "calorieUnstableGroups": 11,
+    "unstableEntryShare": 0.803,
+    "worstCalorieSpread": 1.524,
+    "worst": [
+      {
+        "key": "raising cane s texas toast @ 1 slice",
+        "count": 2,
+        "spreads": {
+          "calories": 1.524,
+          "protein_g": 1.5,
+          "fat_g": 1.6,
+          "carbs_g": 1.462,
+          "sugar_g": 1.333,
+          "saturated_fat_g": 1.25,
+          "riboflavin_mg": 1.5,
+          "niacin_mg": 1.25,
+          "magnesium_mg": 1.25,
+          "potassium_mg": 1.333,
+          "sodium_mg": 1.656,
+          "zinc_mg": 1.25,
+          "phosphorus_mg": 1.091
+        },
+        "calorieValues": [
+          210,
+          320
+        ]
+      },
+      {
+        "key": "celsius energy drink @ 12 fl oz",
+        "count": 4,
+        "spreads": {
+          "calories": 1.5,
+          "carbs_g": 1.5,
+          "caffeine_mg": 1.333
+        },
+        "calorieValues": [
+          10,
+          15,
+          15,
+          10
+        ]
+      },
+      {
+        "key": "pop tarts mini crunchy bites @ 5 bag",
+        "count": 2,
+        "spreads": {
+          "calories": 1.227,
+          "protein_g": 1.5,
+          "fat_g": 1.167,
+          "carbs_g": 1.231,
+          "sugar_g": 1.105,
+          "vitamin_a_mcg": 2.143,
+          "vitamin_d_mcg": 2.5,
+          "vitamin_e_mg": 1.667,
+          "vitamin_b12_mcg": 1.875,
+          "folate_mcg": 1.25,
+          "thiamin_mg": 1.5,
+          "riboflavin_mg": 1.875,
+          "niacin_mg": 1.5,
+          "calcium_mg": 1.25,
+          "iron_mg": 1.563,
+          "potassium_mg": 1.25,
+          "sodium_mg": 1.19,
+          "zinc_mg": 2.5,
+          "selenium_mcg": 1.067,
+          "phosphorus_mg": 1.071
+        },
+        "calorieValues": [
+          675,
+          550
+        ]
+      },
+      {
+        "key": "legendary foods protein pastry @ 1 serving",
+        "count": 7,
+        "spreads": {
+          "calories": 1.211,
+          "fat_g": 1.143,
+          "carbs_g": 1.471,
+          "fiber_g": 5,
+          "sugar_g": 2.333,
+          "saturated_fat_g": 1.25,
+          "vitamin_b12_mcg": 2,
+          "vitamin_b6_mg": 2,
+          "folate_mcg": 2,
+          "thiamin_mg": 2,
+          "riboflavin_mg": 2,
+          "niacin_mg": 2,
+          "calcium_mg": 1.5,
+          "iron_mg": 2,
+          "magnesium_mg": 2,
+          "potassium_mg": 1.2,
+          "sodium_mg": 1.185,
+          "zinc_mg": 2,
+          "selenium_mcg": 2,
+          "phosphorus_mg": 1.5,
+          "cholesterol_mg": 6
+        },
+        "calorieValues": [
+          190,
+          200,
+          200,
+          190,
+          190,
+          230,
+          230
+        ]
+      },
+      {
+        "key": "taco bell nacho cheese queso dipping sauce @ 1 serving",
+        "count": 2,
+        "spreads": {
+          "calories": 1.125,
+          "fat_g": 1.2,
+          "sugar_g": 2,
+          "vitamin_a_mcg": 1.333,
+          "vitamin_d_mcg": 2,
+          "riboflavin_mg": 2,
+          "calcium_mg": 1.333,
+          "potassium_mg": 1.083,
+          "sodium_mg": 1.118,
+          "selenium_mcg": 2,
+          "phosphorus_mg": 1.333
+        },
+        "calorieValues": [
+          80,
+          90
+        ]
+      },
+      {
+        "key": "electrolit electrolyte drink @ 21 fl oz",
+        "count": 2,
+        "spreads": {
+          "calories": 1.111,
+          "carbs_g": 1.136,
+          "sugar_g": 1.25,
+          "magnesium_mg": 4.8,
+          "sodium_mg": 1.154
+        },
+        "calorieValues": [
+          90,
+          100
+        ]
+      },
+      {
+        "key": "raising cane s chicken fingers @ 3 piece",
+        "count": 2,
+        "spreads": {
+          "calories": 1.082,
+          "protein_g": 1.167,
+          "fat_g": 1.125,
+          "carbs_g": 1.067,
+          "vitamin_a_mcg": 1.5,
+          "vitamin_d_mcg": 1.5,
+          "vitamin_e_mg": 1.2,
+          "vitamin_b12_mcg": 1.2,
+          "vitamin_b6_mg": 1.286,
+          "folate_mcg": 1.75,
+          "thiamin_mg": 1.5,
+          "riboflavin_mg": 1.25,
+          "niacin_mg": 1.167,
+          "calcium_mg": 1.125,
+          "iron_mg": 1.1,
+          "magnesium_mg": 1.143,
+          "potassium_mg": 1.238,
+          "sodium_mg": 1.18,
+          "zinc_mg": 1.2,
+          "selenium_mcg": 1.357,
+          "phosphorus_mg": 1.357,
+          "cholesterol_mg": 1.095
+        },
+        "calorieValues": [
+          490,
+          530
+        ]
+      },
+      {
+        "key": "chick fil a 8 count nuggets @ 8 piece",
+        "count": 2,
+        "spreads": {
+          "calories": 1.04,
+          "protein_g": 1.037,
+          "fat_g": 1.091,
+          "carbs_g": 1.091,
+          "vitamin_b6_mg": 1.143,
+          "folate_mcg": 2.5,
+          "niacin_mg": 1.111,
+          "iron_mg": 1.2,
+          "potassium_mg": 1.031,
+          "sodium_mg": 1.453,
+          "phosphorus_mg": 1.045
+        },
+        "calorieValues": [
+          250,
+          260
+        ]
+      },
+      {
+        "key": "pepsi @ 10 fl oz",
+        "count": 3,
+        "spreads": {
+          "calories": 1.04,
+          "carbs_g": 1.044,
+          "sugar_g": 1.044,
+          "potassium_mg": 2,
+          "sodium_mg": 1.143,
+          "phosphorus_mg": 1.188,
+          "caffeine_mg": 1.097
+        },
+        "calorieValues": [
+          125,
+          130,
+          130
+        ]
+      },
+      {
+        "key": "chick fil a hash browns @ 1 serving",
+        "count": 2,
+        "spreads": {
+          "calories": 1.038,
+          "fat_g": 1.063,
+          "carbs_g": 1.16,
+          "saturated_fat_g": 1.2,
+          "vitamin_k_mcg": 1.25,
+          "riboflavin_mg": 2,
+          "niacin_mg": 1.333,
+          "magnesium_mg": 1.111,
+          "potassium_mg": 1.026,
+          "sodium_mg": 1.206,
+          "selenium_mcg": 1.5
+        },
+        "calorieValues": [
+          260,
+          270
+        ]
+      }
+    ]
+  },
+  "coverage": {
+    "entries": 226,
+    "byNutrient": {
+      "calories": 1,
+      "protein_g": 1,
+      "fat_g": 1,
+      "carbs_g": 1,
+      "fiber_g": 0.996,
+      "sugar_g": 1,
+      "saturated_fat_g": 0.991,
+      "vitamin_a_mcg": 0.92,
+      "vitamin_c_mg": 0.942,
+      "vitamin_d_mcg": 0.907,
+      "vitamin_e_mg": 0.903,
+      "vitamin_k_mcg": 0.903,
+      "vitamin_b12_mcg": 0.92,
+      "vitamin_b6_mg": 0.916,
+      "folate_mcg": 0.912,
+      "thiamin_mg": 0.912,
+      "riboflavin_mg": 0.925,
+      "niacin_mg": 0.929,
+      "calcium_mg": 0.969,
+      "iron_mg": 0.951,
+      "magnesium_mg": 0.925,
+      "potassium_mg": 0.965,
+      "sodium_mg": 1,
+      "zinc_mg": 0.92,
+      "selenium_mcg": 0.912,
+      "phosphorus_mg": 0.925,
+      "cholesterol_mg": 0.982,
+      "caffeine_mg": 0.947,
+      "alcohol_g": 0.934
+    },
+    "microMean": 0.94,
+    "hardZeroShare": 0.396
+  },
+  "gold": null
+}

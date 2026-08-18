@@ -211,7 +211,13 @@ async function editExistingLog(existing: DayLog): Promise<FoodEntry[] | null> {
       for (const num of fixNums) {
         const idx = num - 1;
         const parsedFood = parsedFoodFromEntry(entries[idx]);
-        const result = await repickEntry(num, parsedFood, entries[idx]);
+        // entry.batch_id -> batches[].transcript recovers what was originally said, so a
+        // re-estimate is not working from the display string we generated.
+        const batchId = entries[idx].batch_id;
+        const transcript = batchId
+          ? existing.batches.find((b) => b.batch_id === batchId)?.transcript
+          : undefined;
+        const result = await repickEntry(num, parsedFood, entries[idx], transcript);
         entries[idx] = result.entry;
       }
 
@@ -234,7 +240,10 @@ async function editExistingLog(existing: DayLog): Promise<FoodEntry[] | null> {
 async function repickEntry(
   itemNumber: number,
   parsedFood: ParsedFood,
-  currentEntry: FoodEntry
+  currentEntry: FoodEntry,
+  // The text this whole batch was parsed from. Passed down so a re-estimate sees what the
+  // user actually said, not just the display string we built from it.
+  transcript?: string,
 ): Promise<{ entry: FoodEntry; parsedFood: ParsedFood }> {
   const n = currentEntry.nutrients;
   console.log(`\nFix item #${itemNumber}: ${currentEntry.food_name}`);
@@ -259,7 +268,7 @@ async function repickEntry(
     console.log("  Getting Claude estimate...");
     logger.info({ action: "repick_edit", itemNumber, oldName: parsedFood.name, newName: updatedFood.name },
       "repick: editing food description");
-    const nutrients = await estimateOne(updatedFood);
+    const nutrients = await estimateOne(updatedFood, { transcript });
     console.log(`  ✓ ${fmt(nutrients.calories)} cal`);
     return {
       entry: {
@@ -291,7 +300,7 @@ async function repickEntry(
     console.log("  Getting Claude estimate...");
     logger.info({ action: "repick_serving", itemNumber, food: parsedFood.name, newQty, newUnit: updatedFood.unit },
       "repick: changing serving size");
-    const nutrients = await estimateOne(updatedFood);
+    const nutrients = await estimateOne(updatedFood, { transcript });
     console.log(`  ✓ ${fmt(nutrients.calories)} cal`);
     return {
       entry: {
@@ -311,7 +320,7 @@ async function repickEntry(
   if (pickNum === 3) {
     console.log("  Getting fresh Claude estimate...");
     logger.info({ action: "repick_reroll", itemNumber, food: parsedFood.name }, "repick: re-estimating");
-    const nutrients = await estimateOne(parsedFood);
+    const nutrients = await estimateOne(parsedFood, { transcript });
     console.log(`  ✓ ${fmt(nutrients.calories)} cal`);
     return {
       entry: {
@@ -404,7 +413,7 @@ Flags:
   logger.info({ user: args.user, date: args.date, inputLength: foodText.length, autoConfirm: args.yes },
     "cli: starting food log");
 
-  const result = await parseAndEnrich(foodText);
+  const result = await parseAndEnrich(foodText, { userId: args.user });
   const parsedFoods = result.parsedFoods;
   let entries: FoodEntry[] = result.entries;
 
@@ -436,7 +445,7 @@ Flags:
 
     for (const num of repickNums) {
       const idx = num - 1;
-      const r = await repickEntry(num, parsedFoods[idx], entries[idx]);
+      const r = await repickEntry(num, parsedFoods[idx], entries[idx], foodText);
       entries[idx] = r.entry;
       parsedFoods[idx] = r.parsedFood;
     }

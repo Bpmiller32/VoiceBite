@@ -12,8 +12,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, shiftDate, toDateString } from "./api";
-import { fmt, NUTRIENT_META } from "./types";
-import type { DayLog, FoodEntry, LogPreview, Nutrients, NutrientKey, ParsedFood } from "./types";
+import { fmt, NUTRIENT_META, NUTRIENT_KEYS } from "./types";
+import type { DayLog, FoodEntry, LogPreview, LogCostSummary, Nutrients, NutrientKey, ParsedFood } from "./types";
 
 /* ------------------------------------------------------------------ */
 /* Web Speech API types                                                */
@@ -77,7 +77,6 @@ const RecognizerImpl: SpeechRecognizerCtor | undefined =
 // `satisfies` keeps these honest against NUTRIENT_KEYS - a typo here would otherwise
 // only surface as an undefined lookup in NUTRIENT_META at render time.
 const MACRO_KEYS = ["calories", "protein_g", "fat_g", "carbs_g"] as const satisfies readonly NutrientKey[];
-type MacroKey = (typeof MACRO_KEYS)[number];
 
 // Draft fields are strings, not numbers, because an in-progress edit ("1.", "") is not a
 // number yet, and - more importantly - an empty field has to survive round-trips as null
@@ -85,7 +84,16 @@ type MacroKey = (typeof MACRO_KEYS)[number];
 interface Draft {
   food_name: string;
   serving_description: string;
-  macros: Record<MacroKey, string>;
+  /**
+   * Every nutrient, not just the four macros.
+   *
+   * The old version held only MACRO_KEYS, which meant correcting a calorie figure left
+   * the other 25 values exactly as estimated - so fixing Texas toast from 320 to 150
+   * kept its 530 mg of sodium and made the entry MORE internally inconsistent than
+   * before the correction. Fourteen percent of the fields were editable; the rest were
+   * along for the ride.
+   */
+  macros: Record<NutrientKey, string>;
 }
 
 function draftFromEntry(entry: FoodEntry): Draft {
@@ -96,14 +104,23 @@ function draftFromEntry(entry: FoodEntry): Draft {
   };
 }
 
-function macroStrings(nutrients: Nutrients): Record<MacroKey, string> {
-  return {
-    calories: numToField(nutrients.calories),
-    protein_g: numToField(nutrients.protein_g),
-    fat_g: numToField(nutrients.fat_g),
-    carbs_g: numToField(nutrients.carbs_g),
-  };
+function macroStrings(nutrients: Nutrients): Record<NutrientKey, string> {
+  return Object.fromEntries(
+    NUTRIENT_KEYS.map((key) => [key, numToField(nutrients[key])]),
+  ) as Record<NutrientKey, string>;
 }
+
+/**
+ * The nutrients worth offering to edit beyond the four macros.
+ *
+ * Not all 29 - a phone form with 29 numeric inputs is not a correction affordance, it is a
+ * data-entry chore nobody will use. These are the ones printed on a label, so they are the
+ * ones you can actually check against the packet in your hand.
+ */
+const LABEL_KEYS = [
+  "fiber_g", "sugar_g", "saturated_fat_g", "sodium_mg", "cholesterol_mg",
+  "potassium_mg", "calcium_mg", "iron_mg", "vitamin_d_mcg", "caffeine_mg",
+] as const satisfies readonly NutrientKey[];
 
 /** null (unknown) becomes an empty field. 0 stays "0" - it means "contains none". */
 function numToField(value: number | null): string {
@@ -125,7 +142,7 @@ function mergeDrafts(entries: FoodEntry[], drafts: Record<string, Draft>): FoodE
     const draft = drafts[entry.id];
     if (!draft) return entry;
     const nutrients: Nutrients = { ...entry.nutrients };
-    for (const key of MACRO_KEYS) nutrients[key] = fieldToNum(draft.macros[key]);
+    for (const key of NUTRIENT_KEYS) nutrients[key] = fieldToNum(draft.macros[key]);
     return {
       ...entry,
       food_name: draft.food_name.trim() || entry.food_name,
@@ -213,7 +230,33 @@ function speechErrorMessage(code: string): { message: string; fatal: boolean } {
 /* ------------------------------------------------------------------ */
 
 const MAX_TEXT = 8000; // mirrors the server's cap; checked here to avoid a doomed round trip
-const PARSE_ESTIMATE_S = 32; // typical worst case, used only to pace the progress bar
+/**
+ * The stages of a log, and when to claim each one.
+ *
+ * These thresholds come from the real request timeline, not from taste. Measured across
+ * 38 logs: the wait is BIMODAL. Either the model reads the sentence and we are done in
+ * 4-15s, or a published-label lookup fires and it takes 76-80s. Nothing has ever landed
+ * between 15.1s and 76.5s, because the branch is a server-side decision the client cannot
+ * see - the same sentence took 80.0s and then 8.8s two minutes later.
+ *
+ * The old bar was paced to a single 32-second constant that describes none of that. On a
+ * fast log it promised 32s and finished in 8; on a slow one it hit 95% at 30s and then sat
+ * motionless for another 45. A bar that stops moving is what makes a working app feel
+ * broken, so the stages below never claim to be nearly done - they say what is happening.
+ *
+ * `until` is the elapsed second at which we stop claiming this stage. The last has none.
+ */
+const STAGES: Array<{ until?: number; label: string; detail?: string }> = [
+  { until: 3, label: "Sending to the Pi" },
+  { until: 16, label: "Reading what you said", detail: "working out the foods and portions" },
+  // Past ~16s the fast path would have returned, so a lookup is running. This is an
+  // inference, not a server signal - the copy is hedged accordingly.
+  { until: 80, label: "Looking up the published label", detail: "checking the real nutrition facts" },
+  { label: "Still going", detail: "this one is taking longer than usual" },
+];
+
+/** The server's own hard ceiling (VOICEBITE_BUDGET_MS), so the bar can be truthful. */
+const SERVER_BUDGET_S = 80;
 const MAX_SILENT_RESTARTS = 8; // ~a minute of silence before the mic gives up on its own
 
 // The unsaved textarea, kept outside React so it survives this component's lifetime.
@@ -221,6 +264,55 @@ const MAX_SILENT_RESTARTS = 8; // ~a minute of silence before the mic gives up o
 // bar unmounts this screen, so glancing at Today mid-sentence dropped everything typed,
 // and iOS Safari discarding a backgrounded tab did the same to a dictated paragraph.
 const DRAFT_KEY = "voicebite.draft.v1";
+
+/**
+ * The un-confirmed review, kept outside React so it survives this screen unmounting.
+ *
+ * App.tsx renders LogScreen only while the Log tab is active, so tapping Today or History
+ * destroys every useState in here. During capture that costs nothing - the text box
+ * already persists separately. After a parse it costs a completed, paid model call plus
+ * every hand edit made since, and the server session it refers to becomes unreachable:
+ * nothing lists pending sessions, so those results are simply abandoned.
+ *
+ * sessionStorage rather than localStorage: a pending review is meaningful for this browser
+ * session only. The server expires the session after 30 minutes anyway, and confirm()
+ * already handles that with "That session expired - please re-submit".
+ */
+const REVIEW_KEY = "voicebite.review.v1";
+
+interface StoredReview {
+  preview: LogPreview;
+  /**
+   * The working set, which is NOT the same as preview.entries once rows have been removed.
+   * Restoring from preview.entries would resurrect rows you had already deleted.
+   */
+  entries: FoodEntry[];
+  drafts: Record<string, Draft>;
+  date: string;
+}
+
+function loadReview(date: string): StoredReview | null {
+  try {
+    const raw = sessionStorage.getItem(REVIEW_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredReview;
+    // A review belongs to the day it was parsed for. Restoring Tuesday's pending items
+    // onto Wednesday would silently file food against the wrong date.
+    if (!parsed?.preview?.sessionId || parsed.date !== date) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveReview(review: StoredReview | null): void {
+  try {
+    if (review) sessionStorage.setItem(REVIEW_KEY, JSON.stringify(review));
+    else sessionStorage.removeItem(REVIEW_KEY);
+  } catch {
+    /* quota or private browsing - in-memory state is still authoritative */
+  }
+}
 
 function loadDraft(): string {
   try {
@@ -240,9 +332,12 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
   const [elapsed, setElapsed] = useState(0);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
-  const [preview, setPreview] = useState<LogPreview | null>(null);
-  const [entries, setEntries] = useState<FoodEntry[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  // Seeded from sessionStorage so a pending review survives a trip to Today or History.
+  // Without this, leaving the Log tab mid-review threw away a completed paid call.
+  const restored = useRef(loadReview(date)).current;
+  const [preview, setPreview] = useState<LogPreview | null>(restored?.preview ?? null);
+  const [entries, setEntries] = useState<FoodEntry[]>(restored?.entries ?? []);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>(restored?.drafts ?? {});
   const [removed, setRemoved] = useState<{ entry: FoodEntry; draft: Draft; index: number }[]>([]);
   const [mode, setMode] = useState<"append" | "replace">("append");
   const [busyRow, setBusyRow] = useState<string | null>(null);
@@ -505,7 +600,7 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }, []);
 
-  const patchMacro = useCallback((id: string, key: MacroKey, value: string) => {
+  const patchMacro = useCallback((id: string, key: NutrientKey, value: string) => {
     setDrafts((prev) => ({
       ...prev,
       [id]: { ...prev[id], macros: { ...prev[id].macros, [key]: value } },
@@ -627,6 +722,13 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
     setRowError(null);
   }, []);
 
+  // Mirror the pending review out to storage on every change, so an unmount at any moment
+  // - a stray tap on Today, iOS discarding the tab - loses nothing that was already paid for.
+  useEffect(() => {
+    if (preview) saveReview({ preview, entries, drafts, date });
+    else saveReview(null);
+  }, [preview, entries, drafts, date]);
+
   /* ---------------- derived ---------------- */
 
   // Totals of the *edited* values, counting only what's known. Showing "1,240 kcal" when
@@ -651,7 +753,12 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
   const trimmed = text.trim();
   const overLimit = text.length > MAX_TEXT;
   const canSubmit = trimmed.length > 0 && !parsing && !overLimit;
-  const progress = Math.min(95, Math.round((elapsed / PARSE_ESTIMATE_S) * 100));
+  // Determinate against the server's REAL ceiling, which is a genuine 80s deadline
+  // (enricher.ts VOICEBITE_BUDGET_MS), not a guess. Past that the request is being
+  // aborted server-side anyway, so the bar stops pretending and the copy takes over.
+  const stage = STAGES.find((s) => s.until === undefined || elapsed < s.until) ?? STAGES[STAGES.length - 1];
+  const progress = Math.min(97, Math.round((elapsed / SERVER_BUDGET_S) * 100));
+  const overdue = elapsed >= SERVER_BUDGET_S;
 
   /* ---------------- capture view ---------------- */
 
@@ -747,18 +854,31 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
                 <div className="row">
                   <span className="spinner" aria-hidden="true" />
                   <span className="small">
-                    Reading it and estimating nutrition — usually 15–40 seconds.{" "}
+                    {stage.label}
+                    {stage.detail && <span className="muted"> — {stage.detail}</span>}{" "}
                     <span className="num">{elapsed}s</span>
                   </span>
                 </div>
-                {/* Honest pacing, not a fake completion: it creeps toward 95% and waits. */}
+                {/* Determinate against the server's real 80s deadline. Once past it the
+                  * bar goes indeterminate rather than sitting full and motionless, which
+                  * is the state that reads as "hung". */}
                 <div className="bar">
-                  <div className="bar-fill" style={{ width: `${progress}%` }} />
+                  <div
+                    className={overdue ? "bar-fill bar-fill-indeterminate" : "bar-fill"}
+                    style={overdue ? undefined : { width: `${progress}%` }}
+                  />
                 </div>
-                {/* A half-minute wait with a bottom tab bar in thumb reach is an invitation
-                  * to wander off, and leaving this screen abandons the in-flight call. Say so. */}
                 <span className="small muted">
-                  Stay on this screen — switching tabs cancels it. Your words are kept either way.
+                  {overdue
+                    ? "Still working. It gives up at 80 seconds and falls back to an estimate, so this will finish either way."
+                    : "A new food takes about a minute to look up. One you have logged before is a few seconds."}
+                </span>
+                {/* The real constraint, stated accurately. Leaving Safari or switching
+                  * Safari tabs is fine - nothing in this app observes either. Switching to
+                  * Today/History/Settings unmounts this screen and loses the result. */}
+                <span className="small muted">
+                  Don't switch to Today or History until it finishes — this screen loses the
+                  result if you do. Leaving Safari is fine.
                 </span>
               </div>
             )}
@@ -792,6 +912,8 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
             <span className="small muted">You said</span>
             <p>{preview.transcript}</p>
           </div>
+
+          <CostNote cost={preview.cost} />
 
           {preview.existingEntries > 0 && (
             <div className="banner banner-warn stack-sm">
@@ -923,6 +1045,100 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
 /* One editable row                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Where this row's numbers came from, and what had to be assumed to get them.
+ *
+ * This is the whole point of the review screen. Without it a grounded value read off a
+ * third-party database and a figure the model reasoned out look identical, so there is no
+ * way to know which rows deserve a second look. With it, the two cases that matter are
+ * visible at a glance: a value copied from an aggregator, and an assumption that might be
+ * wrong ("treated 2.5 bowls as 4 cups").
+ */
+function Provenance({ entry }: { entry: FoodEntry }) {
+  const meta = entry.estimate;
+  const badge =
+    entry.source === "grounded" ? { text: "From the label", tone: "ok" as const }
+    : entry.source === "pantry" ? { text: "Saved value", tone: "ok" as const }
+    : entry.source === "manual" ? { text: "You typed this", tone: "ok" as const }
+    : { text: "Estimated", tone: "muted" as const };
+
+  // An aggregator is a third party retyping a label. Usually right, occasionally not -
+  // and it is the one source worth naming explicitly so it can be spot-checked.
+  const fromAggregator = meta?.basis === "reference_database";
+  const lowConfidence = meta?.confidence === "low";
+
+  if (!meta && entry.source === "claude_estimate") return null;
+
+  return (
+    <div className="provenance small">
+      <span className={`badge ${badge.tone === "ok" ? "badge-ok" : ""}`}>{badge.text}</span>
+      {meta?.grams ? <span className="muted">{meta.grams} g</span> : null}
+      {lowConfidence && <span className="badge badge-warn">rough estimate</span>}
+      {fromAggregator && <span className="badge badge-warn">third-party data</span>}
+
+      {meta?.source_url && (
+        <a href={meta.source_url} target="_blank" rel="noreferrer" className="muted">
+          {meta.source_title ? meta.source_title.slice(0, 52) : "source"}
+        </a>
+      )}
+
+      {meta?.assumptions && (
+        <div className="provenance-note muted">{meta.assumptions}</div>
+      )}
+      {meta?.violations?.map((v) => (
+        <div className="provenance-note warn" key={v}>{v}</div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What this log cost, in dollars.
+ *
+ * Shown because the range is wide and the reason is invisible from the outside: a food
+ * already in your library is one parse call at a few cents, while a new branded item adds
+ * a published-label lookup that can cost twenty times as much. Attaching the figure to the
+ * log that caused it is what makes that difference legible - and budgetable.
+ *
+ * Four decimals, not two: rounding to cents renders the common case as "$0.03" and the
+ * cheapest as "$0.00", which reads as free.
+ */
+function CostNote({ cost }: { cost: LogCostSummary | undefined }) {
+  const [open, setOpen] = useState(false);
+  if (!cost) return null;
+
+  const label = (method: string) =>
+    method === "parseAndEnrich" ? "reading your words"
+    : method === "resolveOne" ? "label lookup"
+    : method === "enrichMicronutrients" ? "vitamins & minerals"
+    : method;
+
+  return (
+    <div className="cost-note small muted">
+      <button type="button" className="btn-link" onClick={() => setOpen((v) => !v)}>
+        This log cost <span className="num">${cost.usd.toFixed(4)}</span>
+        {cost.calls.length > 1 && <span> · {cost.calls.length} calls</span>}
+        <span aria-hidden="true">{open ? " ▾" : " ▸"}</span>
+      </button>
+      {open && (
+        <div className="cost-breakdown">
+          {cost.calls.map((c, i) => (
+            <div key={i} className="row cost-row">
+              <span>{label(c.method)}</span>
+              <span className="num">${c.usd.toFixed(4)}</span>
+            </div>
+          ))}
+          <div className="row cost-row cost-total">
+            <span>{cost.inputTokens.toLocaleString()} in / {cost.outputTokens.toLocaleString()} out
+              {cost.webSearches > 0 && `, ${cost.webSearches} web searches`}</span>
+            <span className="num">${cost.usd.toFixed(4)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EntryEditor({
   entry,
   draft,
@@ -938,7 +1154,7 @@ function EntryEditor({
   busy: boolean;
   disabled: boolean;
   onPatch: (id: string, patch: Partial<Omit<Draft, "macros">>) => void;
-  onPatchMacro: (id: string, key: MacroKey, value: string) => void;
+  onPatchMacro: (id: string, key: NutrientKey, value: string) => void;
   onRemove: (id: string) => void;
   onReestimate: (id: string) => void;
 }) {
@@ -991,6 +1207,30 @@ function EntryEditor({
             {unknownMacros.map((key) => NUTRIENT_META[key].label.toLowerCase()).join(", ")} unknown
           </span>
         )}
+
+        <Provenance entry={entry} />
+
+        <details className="more-nutrients">
+          <summary className="small muted">Everything else on the label</summary>
+          <div className="entry-macros row-wrap">
+            {LABEL_KEYS.map((key) => (
+              <label className="field" key={key}>
+                <span className="label small">
+                  {NUTRIENT_META[key].label} <span className="muted">({NUTRIENT_META[key].unit})</span>
+                </span>
+                <input
+                  className="input num"
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.macros[key]}
+                  onChange={(e) => onPatchMacro(entry.id, key, e.target.value)}
+                  placeholder="—"
+                  disabled={disabled || busy}
+                />
+              </label>
+            ))}
+          </div>
+        </details>
       </div>
 
       <div className="entry-actions">
