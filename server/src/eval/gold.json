@@ -15,8 +15,7 @@
       "sodium_mg": 370,
       "cholesterol_mg": 5
     },
-    "source_url": "https://www.eatlegendary.com/products/brown-sugar-protein-pastry",
-    "holdout": true
+    "source_url": "https://www.eatlegendary.com/products/brown-sugar-protein-pastry"
   },
   {
     "match": "mcdonald s bacon egg and cheese mcgriddle",
@@ -27,8 +26,7 @@
       "fat_g": 22,
       "carbs_g": 43
     },
-    "source_url": "https://www.mcdonalds.com/us/en-us/product/bacon-egg-cheese-mcgriddles.html",
-    "holdout": false
+    "source_url": "https://www.mcdonalds.com/us/en-us/product/bacon-egg-cheese-mcgriddles.html"
   },
   {
     "match": "almonds",
@@ -62,8 +60,7 @@
       "phosphorus_mg": 481,
       "cholesterol_mg": 0
     },
-    "source_url": "https://tools.myfooddata.com/nutrition-facts/170567/100g",
-    "holdout": false
+    "source_url": "https://tools.myfooddata.com/nutrition-facts/170567/100g"
   },
   {
     "match": "chick fil a chick n minis",
@@ -79,8 +76,7 @@
       "sodium_mg": 1060,
       "cholesterol_mg": 60
     },
-    "source_url": "https://www.chick-fil-a.com/menu/breakfast/4-ct-chick-fil-a-chick-n-minis",
-    "holdout": true
+    "source_url": "https://www.chick-fil-a.com/menu/breakfast/4-ct-chick-fil-a-chick-n-minis"
   },
   {
     "match": "chick fil a coke float",
@@ -91,8 +87,7 @@
       "fat_g": 7,
       "carbs_g": 60
     },
-    "source_url": "https://www.chick-fil-a.com/menu/breakfast/frosted-coke",
-    "holdout": false
+    "source_url": "https://www.chick-fil-a.com/menu/breakfast/frosted-coke"
   },
   {
     "match": "coca cola",
@@ -103,8 +98,7 @@
       "fat_g": 0,
       "carbs_g": 39
     },
-    "source_url": "https://www.eatthismuch.com/calories/cola-original-taste-1598962",
-    "holdout": false
+    "source_url": "https://www.eatthismuch.com/calories/cola-original-taste-1598962"
   },
   {
     "match": "raising cane s crinkle cut fries",
@@ -115,8 +109,7 @@
       "fat_g": 19,
       "carbs_g": 49
     },
-    "source_url": "https://fastfoodnutrition.org/raising-canes/crinkle-cut-fries",
-    "holdout": true
+    "source_url": "https://fastfoodnutrition.org/raising-canes/crinkle-cut-fries"
   },
   {
     "match": "mountain dew",
@@ -127,8 +120,7 @@
       "fat_g": 0,
       "carbs_g": 77
     },
-    "source_url": "https://foods.fatsecret.com/calories-nutrition/mountain-dew/mountain-dew-(20-oz)",
-    "holdout": false
+    "source_url": "https://foods.fatsecret.com/calories-nutrition/mountain-dew/mountain-dew-(20-oz)"
   },
   {
     "match": "cinnamon toast crunch treats bar king size",
@@ -148,8 +140,7 @@
       "sodium_mg": 210,
       "cholesterol_mg": 0
     },
-    "source_url": "https://www.eatthismuch.com/calories/treat-bar-cinnamon-king-size-3108060",
-    "holdout": false
+    "source_url": "https://www.eatthismuch.com/calories/treat-bar-cinnamon-king-size-3108060"
   },
   {
     "match": "iced latte",
@@ -165,8 +156,7 @@
       "sodium_mg": 115,
       "cholesterol_mg": 20
     },
-    "source_url": "https://fastfoodnutrition.org/starbucks/iced-caffe-latte-with-2-milk/grande",
-    "holdout": true
+    "source_url": "https://fastfoodnutrition.org/starbucks/iced-caffe-latte-with-2-milk/grande"
   },
   {
     "match": "chick fil a hash browns",
@@ -182,8 +172,7 @@
       "sodium_mg": 440,
       "cholesterol_mg": 0
     },
-    "source_url": "https://www.chick-fil-a.com/menu/breakfast/hash-browns",
-    "holdout": false
+    "source_url": "https://www.chick-fil-a.com/menu/breakfast/hash-browns"
   },
   {
     "match": "chick fil a 8 count nuggets",
@@ -199,8 +188,7 @@
       "sodium_mg": 1210,
       "cholesterol_mg": 85
     },
-    "source_url": "https://www.chick-fil-a.com/nutrition-allergens",
-    "holdout": false
+    "source_url": "https://www.chick-fil-a.com/nutrition-allergens"
   },
   {
     "match": "mcdonald s hash brown",
@@ -218,8 +206,7 @@
       "sodium_mg": 310,
       "cholesterol_mg": 0
     },
-    "source_url": "https://www.calorieking.com/us/en/foods/f/calories-in-breakfast-hash-browns/jbM3yN9bRtu66cW2qr1b-A",
-    "holdout": true
+    "source_url": "https://www.calorieking.com/us/en/foods/f/calories-in-breakfast-hash-browns/jbM3yN9bRtu66cW2qr1b-A"
   },
   {
     "match": "pepsi",
@@ -230,8 +217,7 @@
       "fat_g": 0,
       "carbs_g": 34
     },
-    "source_url": "https://foods.fatsecret.com/calories-nutrition/bjs-restaurant-brewhouse/pepsi",
-    "holdout": false
+    "source_url": "https://foods.fatsecret.com/calories-nutrition/bjs-restaurant-brewhouse/pepsi"
   },
   {
     "match": "mcdonald s medium iced coffee with vanilla",
@@ -249,7 +235,6 @@
       "sodium_mg": 65,
       "cholesterol_mg": 25
     },
-    "source_url": "https://www.calorieking.com/us/en/foods/f/calories-in-beverages-iced-french-vanilla-coffee-with-light-cream-french-vanilla-syrup-medium/lGd-xkWCQA-hdcBZUymGxA",
-    "holdout": false
+    "source_url": "https://www.calorieking.com/us/en/foods/f/calories-in-beverages-iced-french-vanilla-coffee-with-light-cream-french-vanilla-syrup-medium/lGd-xkWCQA-hdcBZUymGxA"
   }
 ]

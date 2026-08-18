@@ -33,26 +33,12 @@ import { CostMeter } from "./cost";
 
 const MICRO_KEYS = NUTRIENT_KEYS.filter((k) => !CORE_NUTRIENT_KEYS.includes(k));
 
-/**
- * Sources worth preferring, expressed to the model as a preference rather than enforced as
- * a filter.
- *
- * These were `allowed_domains` on the search tool until a hand-maintained list of 29 sites
- * confined a Red Bull lookup to domains that do not carry Red Bull. Preference gets the
- * quality; enforcement got the failures.
- */
-const MANUFACTURER_HINTS = [
-  "mcdonalds.com", "chick-fil-a.com", "raisingcanes.com", "in-n-out.com", "chipotle.com",
-  "starbucks.com", "subway.com", "tacobell.com", "wendys.com", "burgerking.com",
-  "panerabread.com", "dunkindonuts.com", "jackinthebox.com", "sonicdrivein.com",
-  "fairlife.com", "corepower.com", "eatlegendary.com", "chomps.com", "monsterenergy.com",
-  "celsius.com", "drinklmnt.com", "vitacoco.com", "huel.com", "quakeroats.com",
-  "kelloggs.com", "generalmills.com", "pepsico.com", "coca-colacompany.com", "nestle.com",
-];
-const AGGREGATOR_HINTS = [
-  "nutritionix.com", "fatsecret.com", "calorieking.com", "myfooddata.com",
-  "fastfoodnutrition.org", "nutritionvalue.org", "eatthismuch.com",
-];
+// Source quality is a PREFERENCE, not a filter. The search tool once carried an
+// `allowed_domains` list of 29 sites, but a hand-maintained list can't cover what one
+// person actually eats: Red Bull wasn't on it, so a lookup for one of the most documented
+// products in existence was confined to domains that don't carry it. The prompt asks the
+// model to prefer the manufacturer instead, and every result records source_tier + source_url
+// so an aggregator value is visible as one. See groundingTools() for the full rationale.
 
 export type SourceTier = "manufacturer" | "aggregator" | "none";
 
@@ -321,6 +307,12 @@ export async function resolveOne(
 
     opts.meter?.record("resolveOne", opts.model, { inputTokens, outputTokens, webSearches: searches });
     if (!record) {
+      // No usable record is NOT a definitive "this product publishes nothing" - the
+      // pause_turn loop may have been exhausted, the turn may have been narration-only, or
+      // it may have hit max_tokens. Mark it transient so the caller doesn't blacklist the
+      // food for a fortnight over a non-answer. (Every return path must set this flag; the
+      // caller reads it synchronously right after we return.)
+      lastFailureWasTransient = true;
       log.warn(
         { food: args.name, ms: Date.now() - startMs,
           claude: { method: "resolveOne", model: opts.model, inputTokens, outputTokens, webSearches: searches } },

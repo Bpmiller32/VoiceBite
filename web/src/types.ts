@@ -1,4 +1,11 @@
-// Mirrors the server's types.ts. Keep the two in sync when the schema changes.
+// Mirrors the server's types.ts. Keep the two in sync when the schema changes; the wire
+// types (DayLog, DaySummary, FoodEntry, Goals, MetricPoint, LogPreviewResponse,
+// ConfirmResponse) are named to match the server so a second frontend can read one contract.
+//
+// Two DELIBERATE divergences from the server, both display-only or client-only:
+//   - MetricDef gains a `short` field and the goal targets are `number | null` (null = the
+//     client's "clear this goal" signal; the server only ever sends a number or omits it).
+//   - The display helpers below (NUTRIENT_META, RDA, fmt) have no server counterpart.
 //
 // The one thing to internalize: a nutrient value of `null` means UNKNOWN - Claude had
 // no basis for an estimate - while `0` means the food genuinely contains none.
@@ -104,12 +111,14 @@ export interface DayLog {
 export interface DaySummary {
   date: string;
   entry_count: number;
+  /** Non-water entries only - the right denominator for a coverage note (see server types). */
+  food_entry_count: number;
   daily_totals: NutrientTotals;
   daily_coverage: NutrientCoverage;
   daily_water_ml: number;
 }
 
-export interface LogPreview {
+export interface LogPreviewResponse {
   sessionId: string;
   date: string;
   transcript: string;
@@ -134,7 +143,7 @@ export interface LogCostSummary {
   calls: Array<{ method: string; usd: number; inputTokens: number; outputTokens: number; webSearches: number }>;
 }
 
-export interface ConfirmResult {
+export interface ConfirmResponse {
   success: boolean;
   message: string;
   log: DayLog;

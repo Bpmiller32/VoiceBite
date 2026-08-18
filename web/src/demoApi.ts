@@ -11,10 +11,10 @@
 // call goes to /demo/parse, which is open but hard rate-limited and writes nothing.
 
 import type {
-  ConfirmResult, DayLog, DaySummary, FoodEntry, Goals, LogBatch, LogPreview,
+  ConfirmResponse, DayLog, DaySummary, FoodEntry, Goals, LogBatch, LogPreviewResponse,
   Nutrients, ParsedFood, MetricPoint, MetricKey,
 } from "./types";
-import { DEFAULT_GOALS, NUTRIENT_KEYS, METRICS, METRIC_KEYS } from "./types";
+import { DEFAULT_GOALS, METRICS, METRIC_KEYS } from "./types";
 import { generateDemoData, toDayLog, toSummary, dayOffset, DEMO_DAYS } from "./demoData";
 
 const BASE = import.meta.env.DEV
@@ -146,7 +146,7 @@ export const demoApi = {
     return { userId: "demo", goals };
   },
 
-  log: async (text: string, date: string): Promise<LogPreview> => {
+  log: async (text: string, date: string): Promise<LogPreviewResponse> => {
     const { entries } = await parseText(text);
     const sessionId = uid();
     sessions.set(sessionId, { date, entries, transcript: text });
@@ -170,7 +170,7 @@ export const demoApi = {
     };
   },
 
-  confirm: async (sessionId: string, opts?: { entries?: FoodEntry[]; overwrite?: boolean }): Promise<ConfirmResult> => {
+  confirm: async (sessionId: string, opts?: { entries?: FoodEntry[]; overwrite?: boolean }): Promise<ConfirmResponse> => {
     const s = sessions.get(sessionId);
     if (!s) throw new DemoError(404, "session_not_found", "That preview expired. Please re-submit.");
 
@@ -213,21 +213,6 @@ export const demoApi = {
     const { entries } = await parseText(`${food.quantity} ${food.unit} of ${food.name}`);
     if (entries.length === 0) throw new DemoError(422, "no_food_found", "Couldn't estimate that.");
     return { parsed: food, nutrients: entries[0].nutrients };
-  },
-
-  addEntry: async (date: string, entry: { food_name: string; serving_description?: string; nutrients?: Partial<Nutrients>; water_ml?: number }) => {
-    const day = ensureDay(date);
-    const zeroed = Object.fromEntries(NUTRIENT_KEYS.map((k) => [k, null])) as Nutrients;
-    const created: FoodEntry = {
-      id: uid(),
-      food_name: entry.food_name,
-      serving_description: entry.serving_description ?? "1 serving",
-      source: entry.water_ml !== undefined ? "water" : "claude_estimate",
-      nutrients: { ...zeroed, ...(entry.nutrients as Nutrients | undefined) },
-      water_ml: entry.water_ml,
-    };
-    day.entries.push(created);
-    return { entry: created, log: toDayLog(date, day) };
   },
 
   updateEntry: async (date: string, entryId: string, patch: Partial<FoodEntry>) => {

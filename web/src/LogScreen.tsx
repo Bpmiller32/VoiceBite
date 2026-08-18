@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, shiftDate, toDateString } from "./api";
 import { fmt, NUTRIENT_META, NUTRIENT_KEYS } from "./types";
-import type { DayLog, FoodEntry, LogPreview, LogCostSummary, Nutrients, NutrientKey, ParsedFood } from "./types";
+import type { DayLog, FoodEntry, LogPreviewResponse, LogCostSummary, Nutrients, NutrientKey, ParsedFood } from "./types";
 
 /* ------------------------------------------------------------------ */
 /* Web Speech API types                                                */
@@ -281,7 +281,7 @@ const DRAFT_KEY = "voicebite.draft.v1";
 const REVIEW_KEY = "voicebite.review.v1";
 
 interface StoredReview {
-  preview: LogPreview;
+  preview: LogPreviewResponse;
   /**
    * The working set, which is NOT the same as preview.entries once rows have been removed.
    * Restoring from preview.entries would resurrect rows you had already deleted.
@@ -335,7 +335,7 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
   // Seeded from sessionStorage so a pending review survives a trip to Today or History.
   // Without this, leaving the Log tab mid-review threw away a completed paid call.
   const restored = useRef(loadReview(date)).current;
-  const [preview, setPreview] = useState<LogPreview | null>(restored?.preview ?? null);
+  const [preview, setPreview] = useState<LogPreviewResponse | null>(restored?.preview ?? null);
   const [entries, setEntries] = useState<FoodEntry[]>(restored?.entries ?? []);
   const [drafts, setDrafts] = useState<Record<string, Draft>>(restored?.drafts ?? {});
   const [removed, setRemoved] = useState<{ entry: FoodEntry; draft: Draft; index: number }[]>([]);
@@ -586,7 +586,18 @@ export default function LogScreen({ date, onSaved }: { date: string; onSaved: (l
   // A preview is bound to the date its session was created for. If the user changes days
   // mid-review, throwing the preview away is the only safe move - confirming it would
   // write lunch onto the wrong date. The text stays, so re-submitting costs one tap.
+  //
+  // The mount guard is load-bearing: a useEffect ALWAYS fires once on mount, and on mount
+  // the preview was just seeded from sessionStorage (see `restored` above). Without the
+  // guard this effect cleared that restored review on every remount, and the storage-mirror
+  // effect below then erased it from sessionStorage - so the whole "your parse survives a
+  // trip to Today/History" feature never actually worked. Only a genuine day change should
+  // discard. loadReview already refuses a stored review whose date != the current one, so a
+  // stale-date preview is never restored in the first place.
+  const prevDate = useRef(date);
   useEffect(() => {
+    if (prevDate.current === date) return;
+    prevDate.current = date;
     setPreview(null);
     setEntries([]);
     setDrafts({});

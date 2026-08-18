@@ -147,7 +147,13 @@ export function teachPantryFromCorrection(
   }
 }
 
-/** Read the whole history back, newest last. Used by the eval harness and any review UI. */
+/**
+ * Read the whole corrections history back, newest last.
+ *
+ * Currently unused - kept as the reader for the corrections.jsonl that recordCorrection
+ * writes, reserved for the planned "review your corrections" flow and for wiring this
+ * per-user corpus into the eval harness. Not referenced elsewhere yet.
+ */
 export function readCorrections(userId: string): Correction[] {
   const filePath = correctionsPath(userId);
   if (!fs.existsSync(filePath)) return [];

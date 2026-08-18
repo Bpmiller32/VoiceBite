@@ -17,7 +17,7 @@
 //   supplies both the mass and the nutrients, it can satisfy any density band by adjusting
 //   the mass it invented - the check would be self-referential and prove nothing.
 
-import { Nutrients } from "./types";
+import { Nutrients, GramsBasis } from "./types";
 
 export type ViolationCode = "atwater" | "physical_floor" | "density";
 
@@ -27,9 +27,6 @@ export interface Violation {
   severity: "reject" | "warn";
   message: string;
 }
-
-/** Where a gram figure came from. Only a real label makes density checkable. */
-export type GramsBasis = "label_serving" | "typical_portion" | "guess" | "none";
 
 export interface CheckableItem {
   name: string;
@@ -66,7 +63,6 @@ export function checkItem(item: CheckableItem): Violation[] {
   const c = num(n.carbs_g);
   const f = num(n.fat_g);
   const alc = num(n.alcohol_g);
-  const fiber = num(n.fiber_g);
 
   if (cal <= 0) return out;
 
@@ -141,11 +137,6 @@ export function checkItem(item: CheckableItem): Violation[] {
   }
 
   return out;
-}
-
-/** True when nothing about this item contradicts itself. */
-export function isConsistent(item: CheckableItem): boolean {
-  return checkItem(item).every((v) => v.severity !== "reject");
 }
 
 /**

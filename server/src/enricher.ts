@@ -812,6 +812,14 @@ export async function parseAndEnrich(
             });
             log.info({ pantryKey: key, written: written.written, reason: written.reason },
               "saved grounded reference to the pantry");
+
+            // Link the entry back to the pantry row it just created. Without this,
+            // teachPantryFromCorrection bails (it keys off estimate.pantry_key), so a user's
+            // FIRST correction of a freshly-grounded item - the common case, since 78% of
+            // logged calories are branded - is journalled but never pins the value as
+            // verified_by:"owner". Stamped unconditionally: if the upsert was refused because
+            // an owner-verified row already exists, a re-correction should still re-pin it.
+            entry.estimate.pantry_key = key;
           } catch (err) {
             // Never fail a log because the cache write failed.
             log.warn({ err, food: item.name }, "could not save reference to the pantry");

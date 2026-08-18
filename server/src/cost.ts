@@ -11,6 +11,8 @@
 // visibly stale: this figure is for budgeting, and a wrong-but-confident number is the
 // failure mode to avoid. Check them when you change models.
 
+import { CallCost, LogCostSummary } from "./types";
+
 /** USD per million tokens, by model id prefix. Longest match wins. */
 const PRICING: Array<{ prefix: string; inputPerM: number; outputPerM: number }> = [
   { prefix: "claude-opus-5", inputPerM: 5, outputPerM: 25 },
@@ -23,23 +25,6 @@ const PRICING: Array<{ prefix: string; inputPerM: number; outputPerM: number }> 
 
 /** Server-side web search is billed per request, separately from tokens. */
 const USD_PER_WEB_SEARCH = 10 / 1000;
-
-export interface CallCost {
-  /** parseAndEnrich | resolveOne | enrichMicronutrients */
-  method: string;
-  inputTokens: number;
-  outputTokens: number;
-  webSearches: number;
-  usd: number;
-}
-
-export interface LogCost {
-  usd: number;
-  inputTokens: number;
-  outputTokens: number;
-  webSearches: number;
-  calls: CallCost[];
-}
 
 function priceFor(model: string): { inputPerM: number; outputPerM: number } {
   const match = PRICING
@@ -80,7 +65,7 @@ export class CostMeter {
     });
   }
 
-  total(): LogCost {
+  total(): LogCostSummary {
     const sum = (pick: (c: CallCost) => number) => this.calls.reduce((n, c) => n + pick(c), 0);
     return {
       // Four decimal places: a cheap log is $0.03 and rounding to cents would render the

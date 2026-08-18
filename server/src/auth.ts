@@ -37,14 +37,10 @@ export function verifyPassword(password: string, stored: string): boolean {
   const parts = stored.split("$");
   if (parts.length !== 3 || parts[0] !== "scrypt") return false;
 
-  let salt: Buffer;
-  let expected: Buffer;
-  try {
-    salt = Buffer.from(parts[1], "hex");
-    expected = Buffer.from(parts[2], "hex");
-  } catch {
-    return false;
-  }
+  // Buffer.from best-effort-decodes malformed hex (a bad character yields a short buffer)
+  // rather than throwing, so the length check below - not a try/catch - is the real guard.
+  const salt = Buffer.from(parts[1], "hex");
+  const expected = Buffer.from(parts[2], "hex");
   if (expected.length !== SCRYPT_KEYLEN) return false;
 
   const actual = crypto.scryptSync(password, salt, SCRYPT_KEYLEN);
@@ -84,14 +80,10 @@ export function verifyToken(token: string): string | null {
   if (!payload || !sig) return null;
 
   const expected = crypto.createHmac("sha256", secret()).update(payload).digest();
-  let given: Buffer;
-  try {
-    given = Buffer.from(sig, "base64url");
-  } catch {
-    return null;
-  }
-  // Compare lengths first: timingSafeEqual throws on a mismatch, and that throw would
-  // itself be a (very coarse) oracle.
+  // Buffer.from best-effort-decodes a malformed base64url signature rather than throwing;
+  // the length comparison below is the real guard (and timingSafeEqual would throw on a
+  // length mismatch, which is itself a very coarse oracle, so we compare lengths first).
+  const given = Buffer.from(sig, "base64url");
   if (given.length !== expected.length) return null;
   if (!crypto.timingSafeEqual(given, expected)) return null;
 
@@ -105,9 +97,14 @@ export function verifyToken(token: string): string | null {
   }
 }
 
-/** True when a password has been configured. Without one, the gate can't be closed. */
+/**
+ * True when auth is fully configured. Enforces the SAME rule as secret() - a hash plus a
+ * secret of at least 32 chars - so the two never disagree. When they did, a present-but-short
+ * AUTH_SECRET passed this gate and then threw inside secret(), turning the deliberate 503
+ * "auth not configured" into an opaque 500 on every protected route.
+ */
 export function authConfigured(): boolean {
-  return Boolean(process.env.AUTH_PASSWORD_HASH && process.env.AUTH_SECRET);
+  return Boolean(process.env.AUTH_PASSWORD_HASH && (process.env.AUTH_SECRET?.length ?? 0) >= 32);
 }
 
 /**

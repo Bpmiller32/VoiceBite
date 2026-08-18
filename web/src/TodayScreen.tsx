@@ -71,7 +71,9 @@ export default function TodayScreen({ date, onDateChange, refreshKey }: TodayScr
     setEditingId(null);
   }, [fetched]);
 
-  // Re-read on refreshKey so saving goals elsewhere is reflected without a reload.
+  // useGoals subscribes to the goals module store (useSyncExternalStore), so saving goals in
+  // Settings re-renders this screen with the new reference lines without a reload - no
+  // refreshKey involved (that only drives the day fetch above).
   const goals = useGoals();
 
   const log = override ?? fetched;
@@ -305,9 +307,14 @@ function DateNav({ date, onDateChange }: { date: string; onDateChange: (d: strin
 
 /* ── Headline stats ───────────────────────────────────────────────────────── */
 
+// Non-water entries - the right denominator for a "N of M items" coverage note. Water never
+// raises daily_coverage, so counting it (log.entries.length) made any water-logged day read
+// as partial ("calories from 4 of 5 items") even when every food was fully known.
+const foodEntryCount = (log: DayLog) => log.entries.filter((e) => e.source !== "water").length;
+
 function Headline({ log, goals }: { log: DayLog; goals: Goals }) {
   const total = log.daily_totals.calories;
-  const entryCount = log.entries.length;
+  const entryCount = foodEntryCount(log);
   const calorieCoverage = log.daily_coverage.calories;
   // Zero coverage means nobody estimated calories for anything today. `daily_totals` still
   // reads 0, and rendering that 0 as the day's headline figure - with a 0% bar and "2,200
@@ -413,7 +420,7 @@ function MacroStat({
 /* ── Macro split ──────────────────────────────────────────────────────────── */
 
 function MacroSplit({ log }: { log: DayLog }) {
-  const entryCount = log.entries.length;
+  const entryCount = foodEntryCount(log);
 
   // 4 kcal/g for protein and carbs, 9 for fat - the Atwater factors the backend uses too.
   const all = (
@@ -640,8 +647,8 @@ function Entries({
                     busy={busyId === entry.id}
                     confirming={confirmingId === entry.id}
                     onReestimate={onReestimate}
-            anyBusy={busyId !== null || filling}
-            onConfirmDelete={onConfirmDelete}
+                    anyBusy={busyId !== null || filling}
+                    onConfirmDelete={onConfirmDelete}
                     onDelete={onDelete}
                     onEdit={onEdit}
                   />
@@ -985,7 +992,7 @@ function Micronutrients({ log, goals }: { log: DayLog; goals: Goals }) {
   // of the 25 were estimated, so nothing is being hidden, only deferred to one tap.
   const [hideEmpty, setHideEmpty] = useState(true);
 
-  const entryCount = log.entries.length;
+  const entryCount = foodEntryCount(log);
   const withData = MICRO_KEYS.filter((k) => log.daily_coverage[k] > 0);
   const rows = hideEmpty ? withData : MICRO_KEYS;
   const anyPartial = withData.some((k) => log.daily_coverage[k] < entryCount);

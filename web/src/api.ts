@@ -5,18 +5,31 @@
 //   dev  - "/api", which vite.config.ts proxies to the Pi so the browser sees same-origin
 //   prod - VITE_API_BASE (set at build time), defaulting to the public tunnel hostname
 //
-// The API is currently unauthenticated. When auth lands, `authHeaders()` below is the
-// single place a bearer token needs to be attached.
+// Every request carries a bearer token: `authHeaders()` attaches it, `request()` clears the
+// session on a 401 (see onUnauthorized), and the server rejects anything unauthenticated.
 
 import { getToken, onUnauthorized, getSession } from "./session";
 import { demoApi } from "./demoApi";
-import type { DayLog, DaySummary, LogPreview, ConfirmResult, FoodEntry, Nutrients, ParsedFood, Goals, MetricPoint, MetricKey } from "./types";
+import type { DayLog, DaySummary, LogPreviewResponse, ConfirmResponse, FoodEntry, Nutrients, ParsedFood, Goals, MetricPoint, MetricKey } from "./types";
 
 const BASE = import.meta.env.DEV
   ? "/api"
   : (import.meta.env.VITE_API_BASE as string | undefined) ?? "https://voicebite.billmill.dev";
 
+// Fallback user id, used only before a session exists (and by the header while it loads).
+// Set at build time via VITE_USER (documented in the README and web/.env.production). Once
+// signed in, the id the server returned at login is authoritative - see currentUser().
 export const USER = (import.meta.env.VITE_USER as string | undefined) ?? "billy";
+
+/**
+ * Whose data the API reads and writes. When signed in this is the userId the server returned
+ * at login (getSession().userId); it falls back to the build-time USER only before a session
+ * exists. That means the client no longer depends on VITE_USER being kept in lockstep with
+ * the server's DEFAULT_USER - the token names the user, and a second frontend can do the same.
+ */
+function currentUser(): string {
+  return getSession().userId ?? USER;
+}
 
 /** Thrown for any non-2xx response, carrying the server's stable error code. */
 export class ApiError extends Error {
@@ -35,9 +48,9 @@ function authHeaders(): Record<string, string> {
  * How long to wait before giving up on a request.
  *
  * fetch has no default timeout, so without this a stalled connection hangs the screen
- * forever with a spinner and no way out. 75s is deliberately just past the server's own
- * 55s grounding budget - long enough that a slow lookup finishes, short enough to beat
- * Cloudflare's ~100s origin timeout so the user sees our message rather than a 524.
+ * forever with a spinner and no way out. 95s sits just past the server's own ~80s grounding
+ * budget (VOICEBITE_BUDGET_MS) - long enough that a slow lookup finishes, short enough to
+ * beat Cloudflare's ~100s origin timeout so the user sees our message rather than a 524.
  */
 const REQUEST_TIMEOUT_MS = 95_000;
 
@@ -106,9 +119,10 @@ const realApi = {
 
   /** Submit text for parsing. Returns a preview - nothing is saved until confirm(). */
   log: (text: string, date: string, overwrite = false) =>
-    request<LogPreview>("/log", {
+    request<LogPreviewResponse>("/log", {
       method: "POST",
-      body: JSON.stringify({ text, date, userId: USER, overwrite }),
+      // No userId in the body: the server derives it from the bearer token now. See server.ts.
+      body: JSON.stringify({ text, date, overwrite }),
     }),
 
   /**
@@ -117,9 +131,11 @@ const realApi = {
    * or drop rows but not invent new ones.
    */
   confirm: (sessionId: string, opts?: { entries?: FoodEntry[]; overwrite?: boolean }) =>
-    request<ConfirmResult>(`/confirm/${encodeURIComponent(sessionId)}`, {
+    request<ConfirmResponse>(`/confirm/${encodeURIComponent(sessionId)}`, {
       method: "POST",
-      body: JSON.stringify({ userId: USER, ...opts }),
+      // No userId in the body: the server derives it from the token and checks it owns the
+      // pending session. See server.ts.
+      body: JSON.stringify({ ...opts }),
     }),
 
   /**
@@ -136,25 +152,19 @@ const realApi = {
     }),
 
   day: (date: string) =>
-    request<DayLog>(`/log/${USER}/${date}`),
+    request<DayLog>(`/log/${currentUser()}/${date}`),
 
   dates: () =>
-    request<{ userId: string; dates: string[] }>(`/log/${USER}/dates`),
+    request<{ userId: string; dates: string[] }>(`/log/${currentUser()}/dates`),
 
   /** Day summaries across a range - one request, however many days. Powers the charts. */
   range: (from: string, to: string) =>
     request<{ from: string; to: string; days: DaySummary[] }>(
-      `/log/${USER}/range?from=${from}&to=${to}`,
+      `/log/${currentUser()}/range?from=${from}&to=${to}`,
     ),
 
-  addEntry: (date: string, entry: { food_name: string; serving_description?: string; nutrients?: Partial<Nutrients>; water_ml?: number }) =>
-    request<{ entry: FoodEntry; log: DayLog }>(`/log/${USER}/${date}/entries`, {
-      method: "POST",
-      body: JSON.stringify(entry),
-    }),
-
   updateEntry: (date: string, entryId: string, patch: Partial<Pick<FoodEntry, "food_name" | "serving_description" | "nutrients" | "water_ml">>) =>
-    request<{ entry: FoodEntry; log: DayLog }>(`/log/${USER}/${date}/${entryId}`, {
+    request<{ entry: FoodEntry; log: DayLog }>(`/log/${currentUser()}/${date}/${entryId}`, {
       method: "PUT",
       body: JSON.stringify(patch),
     }),
@@ -162,7 +172,7 @@ const realApi = {
   /** Most-eaten foods across a window, aggregated on the server. */
   foods: (from: string, to: string, limit = 20) =>
     request<{ foods: Array<{ key: string; name: string; count: number; total_calories: number; avg_calories: number }> }>(
-      `/log/${USER}/foods?from=${from}&to=${to}&limit=${limit}`,
+      `/log/${currentUser()}/foods?from=${from}&to=${to}&limit=${limit}`,
     ),
 
   /**
@@ -177,29 +187,29 @@ const realApi = {
     if (to) q.set("to", to);
     if (metric) q.set("metric", metric);
     const qs = q.toString();
-    return request<{ metrics: MetricPoint[] }>(`/metrics/${USER}${qs ? `?${qs}` : ""}`);
+    return request<{ metrics: MetricPoint[] }>(`/metrics/${currentUser()}${qs ? `?${qs}` : ""}`);
   },
 
   putMetric: (date: string, metric: MetricKey, value: number, unit: string) =>
-    request<{ metric: MetricPoint }>(`/metrics/${USER}/${date}/${metric}`, {
+    request<{ metric: MetricPoint }>(`/metrics/${currentUser()}/${date}/${metric}`, {
       method: "PUT",
       body: JSON.stringify({ value, unit }),
     }),
 
   deleteMetric: (date: string, metric: MetricKey) =>
-    request<{ success: boolean }>(`/metrics/${USER}/${date}/${metric}`, { method: "DELETE" }),
+    request<{ success: boolean }>(`/metrics/${currentUser()}/${date}/${metric}`, { method: "DELETE" }),
 
   /** Daily targets. Server-side so the phone and the desktop agree - see goals.ts. */
-  getGoals: () => request<{ userId: string; goals: Goals }>(`/profile/${USER}`),
+  getGoals: () => request<{ userId: string; goals: Goals }>(`/profile/${currentUser()}`),
 
   putGoals: (goals: Partial<Goals>) =>
-    request<{ userId: string; goals: Goals }>(`/profile/${USER}`, {
+    request<{ userId: string; goals: Goals }>(`/profile/${currentUser()}`, {
       method: "PUT",
       body: JSON.stringify({ goals }),
     }),
 
   deleteEntry: (date: string, entryId: string) =>
-    request<{ deleted: FoodEntry; log: DayLog }>(`/log/${USER}/${date}/${entryId}`, {
+    request<{ deleted: FoodEntry; log: DayLog }>(`/log/${currentUser()}/${date}/${entryId}`, {
       method: "DELETE",
     }),
 }

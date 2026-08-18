@@ -18,7 +18,7 @@
 import fs from "fs";
 import path from "path";
 import {
-  DayLog, FoodEntry, DaySummary, LogBatch, SCHEMA_VERSION, NUTRIENT_KEYS,
+  DayLog, FoodEntry, DaySummary, LogBatch, SCHEMA_VERSION,
   Goals, GOAL_KEYS, OPTIONAL_GOAL_KEYS, DEFAULT_GOALS,
   MetricKey, MetricPoint, DayMetrics, MetricReading, METRICS, METRIC_KEYS, convertMetric,
 } from "./types";
@@ -240,24 +240,10 @@ export function readDayLog(userId: string, date: string): DayLog | null {
 export function writeDayLog(dayLog: DayLog): string {
   const log = getLogger();
   const filePath = getDayFilePath(dayLog.userId, dayLog.date);
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-
   const toWrite: DayLog = { ...dayLog, schema_version: SCHEMA_VERSION };
 
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-    // Write to a temp file and fsync before renaming. rename() is atomic within a
-    // filesystem, so a reader either sees the whole old file or the whole new one.
-    const fd = fs.openSync(tmpPath, "w");
-    try {
-      fs.writeFileSync(fd, JSON.stringify(toWrite, null, 2), "utf-8");
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmpPath, filePath);
-
+    writeJsonAtomic(filePath, toWrite);
     log.info({
       userId: toWrite.userId,
       date: toWrite.date,
@@ -265,10 +251,8 @@ export function writeDayLog(dayLog: DayLog): string {
       totalCalories: Math.round(toWrite.daily_totals.calories),
       filePath,
     }, "wrote day log");
-
     return filePath;
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
     log.error({ err, userId: dayLog.userId, date: dayLog.date, filePath }, "failed to write day log");
     throw err;
   }
@@ -365,6 +349,7 @@ export function readRange(userId: string, from: string, to: string): DaySummary[
     summaries.push({
       date: day.date,
       entry_count: day.entries.length,
+      food_entry_count: day.entries.filter((e) => e.source !== "water").length,
       daily_totals: day.daily_totals,
       daily_coverage: day.daily_coverage,
       daily_water_ml: day.daily_water_ml,
@@ -394,7 +379,7 @@ export interface FoodStat {
   avg_calories: number;
 }
 
-function foodKey(name: string): string {
+export function foodKey(name: string): string {
   return name
     .toLowerCase()
     // Drop the trailing serving parenthetical food_name is built with - "(3 stick)" -
@@ -499,7 +484,16 @@ export function readGoals(userId: string): Goals {
   if (!fs.existsSync(filePath)) return { ...DEFAULT_GOALS };
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    return sanitizeGoals(parsed?.goals ?? parsed);
+    // A stored file is authoritative about the OPTIONAL goals: an optional key that is
+    // absent from it means the user cleared it, not "fall back to the default". Merging
+    // onto the full DEFAULT_GOALS (which sets sleep_target:8 and distance_target:3) would
+    // resurrect a goal the user turned off - Settings says "Saved", yet the line reappears
+    // on every chart next load. So strip the optional keys from the merge base: required
+    // keys still default, and any optional goal actually present in the file is preserved.
+    // (A fresh install has no file and still gets the full defaults above.)
+    const base: Goals = { ...DEFAULT_GOALS };
+    for (const key of OPTIONAL_GOAL_KEYS) delete base[key];
+    return sanitizeGoals(parsed?.goals ?? parsed, base);
   } catch (err) {
     // Quarantine before falling back. writeGoals merges onto whatever this returns, so a
     // silent fallback to defaults means the next Settings save permanently overwrites the
@@ -515,22 +509,12 @@ export function writeGoals(userId: string, goals: unknown): Goals {
   const filePath = getProfilePath(userId);
   // Merge onto what is already stored, so a partial update doesn't reset the other fields.
   const clean = sanitizeGoals(goals, readGoals(userId));
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
 
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const fd = fs.openSync(tmpPath, "w");
-    try {
-      fs.writeFileSync(fd, JSON.stringify({ userId, goals: clean }, null, 2), "utf-8");
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmpPath, filePath);
+    writeJsonAtomic(filePath, { userId, goals: clean });
     log.info({ userId, goals: clean }, "wrote goals");
     return clean;
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
     log.error({ err, userId, filePath }, "failed to write goals");
     throw err;
   }
@@ -603,19 +587,9 @@ function readMetricsFile(userId: string): MetricsFile {
 function writeMetricsFile(userId: string, file: MetricsFile): void {
   const log = getLogger();
   const filePath = getMetricsPath(userId);
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const fd = fs.openSync(tmpPath, "w");
-    try {
-      fs.writeFileSync(fd, JSON.stringify(file, null, 2), "utf-8");
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmpPath, filePath);
+    writeJsonAtomic(filePath, file);
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
     log.error({ err, userId, filePath }, "failed to write metrics file");
     throw err;
   }
@@ -713,6 +687,3 @@ export function todayDateString(): string {
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
-
-// Re-export so callers don't need to reach into types.ts for the nutrient list
-export { NUTRIENT_KEYS };

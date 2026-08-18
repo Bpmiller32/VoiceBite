@@ -35,6 +35,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, shiftDate, toDateString } from "./api";
+import { AXIS_TICK, GRID, tickDate, longDate, dateSequence, rollingMean } from "./chartUtils";
 import { useGoals } from "./goals";
 import {
   MetricChart, WeightAgainst, WeekdayPattern, TopFoods, NutrientCoverageChart,
@@ -56,6 +57,9 @@ interface Row {
   date: string;
   logged: boolean;
   entryCount: number;
+  /** Non-water entries. The denominator for the coverage note, since water never counts
+   *  toward coverage - using entryCount made every water-logged day read as "partial". */
+  foodCount: number;
   calories: number | null;
   trend: number | null;
   protein: number | null;
@@ -89,43 +93,6 @@ function knownTotal(day: DaySummary, key: NutrientKey): number | null {
   return typeof total === "number" && Number.isFinite(total) ? total : null;
 }
 
-/**
- * Inclusive YYYY-MM-DD sequence, walked backwards from `to` so that the cap keeps the
- * most recent days. Building it forwards meant an "All time" range longer than the cap
- * silently dropped the newest days - the half the user actually looks at.
- */
-function dateSequence(from: string, to: string): string[] {
-  const out: string[] = [];
-  let cursor = to;
-  while (cursor >= from && out.length < 1200) {
-    out.push(cursor);
-    cursor = shiftDate(cursor, -1);
-  }
-  return out.reverse();
-}
-
-/**
- * Trailing 7-day mean over the days that were actually LOGGED in the window -
- * not over 7 calendar days. Dividing by 7 through the user's 3-month dormant
- * stretch would drag the trend line to near zero and read as "they ate less",
- * which is the opposite of what happened. Requiring 3 samples also stops the
- * trend from drawing a confident line straight across a gap.
- */
-function rollingMean(values: (number | null)[], window = 7, minSamples = 3): (number | null)[] {
-  return values.map((_, i) => {
-    let sum = 0;
-    let n = 0;
-    for (let j = Math.max(0, i - window + 1); j <= i; j++) {
-      const v = values[j];
-      if (v !== null) {
-        sum += v;
-        n += 1;
-      }
-    }
-    return n >= minSamples ? sum / n : null;
-  });
-}
-
 function buildRows(from: string, to: string, days: DaySummary[]): Row[] {
   const byDate = new Map(days.map((d) => [d.date, d]));
   const dates = dateSequence(from, to);
@@ -138,7 +105,7 @@ function buildRows(from: string, to: string, days: DaySummary[]): Row[] {
     // or one emptied day drags the average down as if it were a fast.
     if (!day || day.entry_count <= 0) {
       return {
-        date, logged: false, entryCount: 0,
+        date, logged: false, entryCount: 0, foodCount: 0,
         calories: null, trend: null, protein: null, carbs: null, fat: null,
         proteinPct: null, carbsPct: null, fatPct: null,
         sodium: null, sugar: null, water: null, coverage: {},
@@ -158,6 +125,7 @@ function buildRows(from: string, to: string, days: DaySummary[]): Row[] {
       date,
       logged: true,
       entryCount: day.entry_count,
+      foodCount: day.food_entry_count ?? day.entry_count,
       calories: knownTotal(day, "calories"),
       trend: null, // filled below, once the whole series exists
       protein,
@@ -182,16 +150,6 @@ function buildRows(from: string, to: string, days: DaySummary[]): Row[] {
 }
 
 // ── small formatting helpers ───────────────────────────────────────────────
-
-const tickDate = (iso: string) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
-
-/** Noon avoids the UTC-midnight-becomes-yesterday class of bug. */
-const longDate = (iso: string) =>
-  new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
 
 const compact = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -228,9 +186,6 @@ interface SeriesSpec {
   also?: "protein" | "carbs" | "fat";
   alsoUnit?: string;
 }
-
-const AXIS_TICK = { fill: "var(--chart-axis)", fontSize: 11 };
-const GRID = "var(--chart-grid)";
 
 function Legend({ series }: { series: SeriesSpec[] }) {
   return (
@@ -303,9 +258,9 @@ function partialNote(row: Row, series: SeriesSpec[]): string | null {
   const partial = series
     .filter((s) => s.nutrient !== undefined)
     .map((s) => ({ s, known: row.coverage[s.nutrient as NutrientKey] ?? 0 }))
-    .filter(({ known }) => known > 0 && known < row.entryCount);
+    .filter(({ known }) => known > 0 && known < row.foodCount);
   if (partial.length === 0) return null;
-  const names = partial.map(({ s, known }) => `${s.label.toLowerCase()} from ${known} of ${row.entryCount}`);
+  const names = partial.map(({ s, known }) => `${s.label.toLowerCase()} from ${known} of ${row.foodCount}`);
   return `Partial: ${names.join(", ")}.`;
 }
 

@@ -10,39 +10,20 @@ import {
 } from "recharts";
 import type { DaySummary, Goals, MetricKey, MetricPoint, NutrientKey } from "./types";
 import { NUTRIENT_META, RDA, fmt, METRICS, displayUnit, metricValue } from "./types";
-
-const AXIS_TICK = { fill: "var(--chart-axis)", fontSize: 11 };
-const GRID = "var(--chart-grid)";
-
-const tickDate = (iso: string) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
-const longDate = (iso: string) =>
-  new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-
-/** Every date from `from` to `to` inclusive, so gaps stay visible as gaps. */
-function dateSequence(from: string, to: string): string[] {
-  const out: string[] = [];
-  const cursor = new Date(`${from}T12:00:00`);
-  const end = new Date(`${to}T12:00:00`);
-  while (cursor <= end && out.length < 1500) {
-    out.push(
-      `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`,
-    );
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return out;
-}
+import { AXIS_TICK, GRID, tickDate, longDate, dateSequence, rollingMean } from "./chartUtils";
 
 /**
- * Trailing mean over a calendar window, skipping days with no value.
- * Weight is noisy day to day - a couple of pounds of water is louder than a week of
- * actual change - so the smoothed line is the one worth reading.
+ * A day's calorie total, or null when NO food entry contributed a known calorie value.
+ *
+ * A water-only day is entry_count=1 but daily_coverage.calories=0 (water never raises
+ * coverage). Gating on entry_count alone counted such a day as a genuine 0 kcal "fast" -
+ * dragging the weekday average down, landing in the short-sleep bucket as a 0 kcal day, and
+ * drawing a 0 bar next to the weight line. That is exactly the null-vs-0 failure this app is
+ * built to avoid; NutrientCoverageChart already gates every bar this way. A deliberate fast
+ * isn't distinguishable from a forgotten-to-log day here, so treat both as unknown.
  */
-function rollingMean(values: (number | null)[], window = 7, minSamples = 3): (number | null)[] {
-  return values.map((_, i) => {
-    const slice = values.slice(Math.max(0, i - window + 1), i + 1).filter((v): v is number => v !== null);
-    if (slice.length < minSamples) return null;
-    return Math.round((slice.reduce((a, b) => a + b, 0) / slice.length) * 10) / 10;
-  });
+function knownCalories(d: DaySummary): number | null {
+  return (d.daily_coverage?.calories ?? 0) > 0 ? d.daily_totals.calories : null;
 }
 
 function CardShell({ title, subtitle, note, children }: {
@@ -211,7 +192,7 @@ export function WeightAgainst({ days, points, goals, against }: {
 
   const rows = useMemo(() => {
     const other = against === "calories"
-      ? new Map(days.filter((d) => d.entry_count > 0).map((d) => [d.date, d.daily_totals.calories]))
+      ? new Map(days.filter((d) => knownCalories(d) !== null).map((d) => [d.date, d.daily_totals.calories]))
       : new Map(points.filter((p) => p.metric === "distance").map((p) => [p.date, metricValue(p, goals)]));
 
     return points
@@ -279,9 +260,10 @@ export function WeekdayPattern({ days, goals }: { days: DaySummary[]; goals: Goa
   const rows = useMemo(() => {
     const buckets = WEEKDAYS.map((label) => ({ label, total: 0, count: 0 }));
     for (const d of days) {
-      if (d.entry_count <= 0) continue;
+      const cal = knownCalories(d);
+      if (cal === null) continue;
       const idx = new Date(`${d.date}T12:00:00`).getDay();
-      buckets[idx].total += d.daily_totals.calories;
+      buckets[idx].total += cal;
       buckets[idx].count += 1;
     }
     return buckets.map((b) => ({
@@ -512,7 +494,7 @@ export function ShortNightEffect({ days, points, goals }: {
   const threshold = goals.sleep_target ?? 8;
 
   const result = useMemo(() => {
-    const calByDate = new Map(days.filter((d) => d.entry_count > 0).map((d) => [d.date, d.daily_totals.calories]));
+    const calByDate = new Map(days.filter((d) => knownCalories(d) !== null).map((d) => [d.date, d.daily_totals.calories]));
     const sleepByDate = new Map(
       points.filter((p) => p.metric === "sleep").map((p) => [p.date, p.in.h ?? p.value]),
     );

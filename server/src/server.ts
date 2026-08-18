@@ -4,7 +4,10 @@
 // and is called by the web frontend and by iPhone Shortcuts.
 //
 // Endpoints:
-//   GET    /health                          - liveness + version, for monitoring
+//   GET    /health                          - liveness + version, for monitoring (open)
+//   POST   /auth/login                       - password -> signed bearer token (open)
+//   GET    /auth/me                           - is this token still valid?
+//   POST   /demo/parse                       - parse only, saves nothing, hard rate-limited (open)
 //   POST   /log                             - parse text, enrich, return a preview to confirm
 //   POST   /confirm/:sessionId              - confirm a pending session, write it to disk
 //   POST   /estimate                        - re-estimate one food item without saving
@@ -29,7 +32,7 @@ import "./env";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { initLogger } from "./logger";
-import { parseAndEnrich, estimateOne, sumNutrients, sumWaterMl, sanitizeNutrients, zeroNutrients } from "./enricher";
+import { parseAndEnrich, estimateOne, sanitizeNutrients, zeroNutrients } from "./enricher";
 import {
   appendEntries, readDayLog, writeDayLog, listDates, readRange, buildDayLog,
   todayDateString, isValidDate, isValidUserId, readGoals, writeGoals,
@@ -269,7 +272,7 @@ app.post("/demo/parse", rateLimit(6, 60 * 60_000), wrap(async (req, res) => {
 // Nothing is written to disk yet - the client must call /confirm/:sessionId to save.
 app.post("/log", requireAuth, rateLimit(20), wrap(async (req, res) => {
   const reqLog = (req as any).log;
-  const { text, userId, date, overwrite } = req.body ?? {};
+  const { text, date, overwrite } = req.body ?? {};
 
   if (!text || typeof text !== "string" || text.trim().length === 0) {
     reqLog.warn("empty text field in request body");
@@ -282,7 +285,12 @@ app.post("/log", requireAuth, rateLimit(20), wrap(async (req, res) => {
     return;
   }
 
-  const user = userId ?? DEFAULT_USER;
+  // The user is whoever the token vouches for, never what the body claims. The read/edit
+  // routes already enforce token==path via requireOwnUser; deriving the write user from the
+  // token keeps the whole API on one identity rule and stops a mismatched client from writing
+  // into a directory the read routes could never surface. (The web client still sends a
+  // userId in the body for backward compatibility; it is deliberately ignored here.)
+  const user = (req as any).userId;
   const logDate = date ?? todayDateString();
 
   if (!isValidUserId(user)) {
@@ -362,8 +370,10 @@ app.post("/log", requireAuth, rateLimit(20), wrap(async (req, res) => {
 app.post("/confirm/:sessionId", requireAuth, wrap(async (req, res) => {
   const reqLog = (req as any).log;
   const { sessionId } = req.params;
-  const { userId, overwrite, entries: editedEntries } = req.body ?? {};
-  const user = userId ?? DEFAULT_USER;
+  const { overwrite, entries: editedEntries } = req.body ?? {};
+  // Derive the user from the token, not the body (see POST /log). The session-user check
+  // below then confirms this token owns the pending session it is trying to confirm.
+  const user = (req as any).userId;
 
   const session = getSession(sessionId);
   if (!session) {
@@ -486,7 +496,7 @@ app.post("/confirm/:sessionId", requireAuth, wrap(async (req, res) => {
 // string alone throws away everything the user actually said - see EstimateOneOptions.
 app.post("/estimate", requireAuth, rateLimit(30), wrap(async (req, res) => {
   const reqLog = (req as any).log;
-  const { name, quantity, unit, userId, date, entryId } = req.body ?? {};
+  const { name, quantity, unit, date, entryId } = req.body ?? {};
 
   if (!name || typeof name !== "string" || !name.trim()) {
     res.status(400).json({ error: { code: "invalid_name", message: "Body must include a non-empty 'name'" } });
@@ -500,7 +510,8 @@ app.post("/estimate", requireAuth, rateLimit(30), wrap(async (req, res) => {
 
   // Best-effort transcript recovery. A miss here is not an error - the endpoint has always
   // worked without it, and a caller who has no entry to point at still gets an estimate.
-  const transcript = findTranscript(userId ?? DEFAULT_USER, date, entryId, reqLog);
+  // Scoped to the token's user (see POST /log), not a body-supplied userId.
+  const transcript = findTranscript((req as any).userId, date, entryId, reqLog);
 
   const nutrients = await estimateOne(food, { transcript, logger: reqLog });
   res.json({ parsed: food, nutrients });
@@ -901,11 +912,13 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     logger.info({ signal }, "shutting down");
     server.close(() => process.exit(0));
-    // Long enough to outlast a model call in flight. p90 for POST /log is ~19s today and
-    // grounded lookups are budgeted to 55s, so a 10s window meant `pm2 restart` routinely
-    // killed a request the user was standing there waiting for - and the session it would
-    // have created. 70s covers the worst case with headroom.
-    setTimeout(() => process.exit(0), 70_000).unref();
+    // Long enough to outlast a POST /log still in flight. That request is bounded by
+    // VOICEBITE_BUDGET_MS (default 80s), so derive the drain from it with headroom rather
+    // than hardcoding a number that goes stale: when the budget was 55s a fixed 70s window
+    // had margin, but once the budget rose to 80s that same 70s could kill a fully-grounded
+    // log the user was standing there waiting for - the exact truncation this drain prevents.
+    const budgetMs = Number(process.env.VOICEBITE_BUDGET_MS) || 80_000;
+    setTimeout(() => process.exit(0), budgetMs + 15_000).unref();
   });
 }
 

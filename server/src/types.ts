@@ -179,6 +179,10 @@ export interface DayLog {
 export interface DaySummary {
   date: string;
   entry_count: number;
+  // Non-water entries only. This is the right denominator for a coverage note ("sodium from
+  // 6 of 9 items"): daily_coverage never counts water, so comparing it against entry_count
+  // (which does) makes any water-logged day read as partial even when every food was known.
+  food_entry_count: number;
   daily_totals: NutrientTotals;
   daily_coverage: NutrientCoverage;
   daily_water_ml: number;
@@ -378,13 +382,23 @@ export interface LogPreviewResponse {
   cost?: LogCostSummary;
 }
 
+/** One model call's cost - a single line in a LogCostSummary breakdown. */
+export interface CallCost {
+  /** parseAndEnrich | resolveOne | enrichMicronutrients */
+  method: string;
+  usd: number;
+  inputTokens: number;
+  outputTokens: number;
+  webSearches: number;
+}
+
 export interface LogCostSummary {
   usd: number;
   inputTokens: number;
   outputTokens: number;
   webSearches: number;
   /** Per-call breakdown, so an expensive log can be explained rather than just reported. */
-  calls: Array<{ method: string; usd: number; inputTokens: number; outputTokens: number; webSearches: number }>;
+  calls: CallCost[];
 }
 
 // What the HTTP server sends back after POST /confirm/:sessionId

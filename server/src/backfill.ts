@@ -224,16 +224,17 @@ async function main(): Promise<void> {
 }
 
 /**
- * Emit an evaluation set from what was accepted.
+ * Emit an evaluation set from what was accepted: each food's foodKey, its published
+ * per-serving values, and the source URL they came from, so a lookup can be scored against
+ * the real number rather than a plausible one.
  *
- * Two thirds is pinned into the pantry and one third is held out, so the harness is not
- * grading the pantry against itself. The held-out foods still get looked up normally at
- * log time; they are simply the ones whose numbers the harness gets to check.
+ * Note the accepted foods have all just been pinned into the pantry above, so goldMetric
+ * scores them against the same published labels they were seeded from - see the caveat on
+ * goldMetric in eval/metrics.ts about what that measures and what it doesn't.
  */
 function writeGoldSet(accepted: Array<{ stat: FoodStat; result: ResolveResult }>): void {
   const goldPath = path.resolve(__dirname, "eval", "gold.json");
-  const holdoutEvery = 3;
-  const items = accepted.map(({ stat, result }, i) => ({
+  const items = accepted.map(({ stat, result }) => ({
     match: stat.key,
     display_name: result.record.display_name || stat.name,
     expected: Object.fromEntries(
@@ -242,13 +243,11 @@ function writeGoldSet(accepted: Array<{ stat: FoodStat; result: ResolveResult }>
         .filter(([, v]) => v !== null),
     ),
     source_url: result.record.source_url,
-    holdout: i % holdoutEvery === 0,
   }));
 
   fs.mkdirSync(path.dirname(goldPath), { recursive: true });
   fs.writeFileSync(goldPath, JSON.stringify(items, null, 2), "utf-8");
-  const held = items.filter((i) => i.holdout).length;
-  console.log(`Wrote ${items.length} foods to eval/gold.json (${held} held out of the pantry).`);
+  console.log(`Wrote ${items.length} foods to eval/gold.json.`);
   console.log(`Run: npm run eval -- --tag after-backfill\n`);
 }
 

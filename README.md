@@ -65,7 +65,9 @@ cd web && npm run build          # type-checks, then builds to web/dist
 
 The dev server proxies `/api` to `localhost:3000` so the browser sees one origin and CORS
 never applies — which is exactly why a bad allow-list only ever shows up in production.
-Set `VITE_PROXY_TARGET` to point the dev server at a backend somewhere else.
+Set `VITE_PROXY_TARGET` to point the dev server at a backend somewhere else. `VITE_USER`
+(default `billy`, set in `web/.env.production`) is the fallback user id the signed-out build
+reads before login; once signed in, the client uses the user id the server returns instead.
 
 **CLI** (still the fastest way to log from a terminal):
 
@@ -144,8 +146,10 @@ pm2 restart VoiceBite
 - With either variable unset the gate returns 503 rather than falling open. An
   unconfigured gate that silently allows everything is the worst of both worlds.
 - **The gate is on the server, not the UI.** Every `/log`, `/profile` and `/metrics` route
-  requires a valid token, and the token's user must match the `:userId` in the path.
-  A login screen that only hid React would be theatre — `curl` doesn't run JavaScript.
+  requires a valid token, and the user is taken from that token — never from the URL or the
+  request body. A path `:userId` that doesn't match the token is refused, and the write routes
+  ignore any userId in the body. A login screen that only hid React would be theatre — `curl`
+  doesn't run JavaScript.
 
 Open on purpose: `/health` (monitoring), `/auth/login`, and `/demo/parse`.
 
@@ -170,8 +174,9 @@ The one thing not faked is parsing — that would be demoing nothing. `POST /dem
 the real model, writes nothing, and is capped at 6 requests per hour per IP.
 
 The data is deliberately imperfect: ~18 of 90 days unlogged, ~30% of entries missing
-micronutrients, sodium and sugar frequently over. A tidy demo would hide the gap handling
-and partial-coverage disclosure, which are the parts that took the most care.
+micronutrients, sodium and sugar frequently over (weekends add a dessert, the odd drink and a
+heavier plate). A tidy demo would hide the gap handling and partial-coverage disclosure, which
+are the parts that took the most care.
 
 ## Data
 
@@ -212,7 +217,7 @@ GET    /health                          open
 POST   /auth/login                      open — { password } -> { token }
 GET    /auth/me                         is this token still valid?
 POST   /demo/parse                      open, hard rate-limited — parses, saves nothing
-POST   /log                             { text, date?, userId?, overwrite? } -> preview
+POST   /log                             { text, date?, overwrite? } -> preview (user from token)
 POST   /confirm/:sessionId              { entries?, overwrite? } -> saves; entries lets you save edits
 POST   /estimate                        { name, quantity?, unit? } -> re-estimate one item
 GET    /log/:userId/dates

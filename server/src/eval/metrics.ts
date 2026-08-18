@@ -9,6 +9,7 @@
 
 import { DayLog, FoodEntry, Nutrients, NUTRIENT_KEYS, CORE_NUTRIENT_KEYS, NutrientKey } from "../types";
 import { atwaterResidual, checkItem } from "../verify";
+import { foodKey } from "../store";
 
 // ── shared helpers ─────────────────────────────────────────────────────────
 
@@ -210,14 +211,16 @@ export function coverageMetric(days: DayLog[]): CoverageMetric {
 // ── 4. Gold-set error ──────────────────────────────────────────────────────
 
 export interface GoldItem {
-  /** repeatKey() of the entries this covers, or a substring matched against food_name. */
+  /**
+   * How this gold row finds its entries. `backfill --gold` writes store.ts foodKey(food_name)
+   * here; a hand-authored row may instead put a plain substring to match against food_name.
+   * goldMetric tries foodKey equality first, then repeatKey, then a substring fallback.
+   */
   match: string;
   display_name: string;
   /** Published values for the portion described by `match`. Omit what the source doesn't state. */
   expected: Partial<Nutrients>;
   source_url: string;
-  /** Held-out items are measured but never allowed into the pantry. */
-  holdout?: boolean;
 }
 
 export interface GoldMetric {
@@ -226,6 +229,11 @@ export interface GoldMetric {
   worst: Array<{ name: string; nutrient: string; expected: number; got: number; errPct: number }>;
 }
 
+// NOTE on what this metric does and doesn't tell you: an entry that was logged from the
+// pantry carries numbers that came from the same published label the gold `expected` values
+// were copied from, so it scores near-zero error by construction. The gold metric is
+// therefore most meaningful for entries the pipeline estimated or grounded fresh; a mix
+// weighted toward pantry hits will read more accurate than the estimator actually is.
 export function goldMetric(days: DayLog[], gold: GoldItem[]): GoldMetric {
   const entries = foodEntries(days);
   const errs: Record<string, number[]> = {};
@@ -233,8 +241,16 @@ export function goldMetric(days: DayLog[], gold: GoldItem[]): GoldMetric {
   let covered = 0;
 
   for (const g of gold) {
+    // foodKey equality is the primary match: `backfill --gold` writes foodKey(food_name) into
+    // `match`, and that key flattens punctuation ("Chick-fil-A" -> "chick fil a"), so the old
+    // repeatKey/substring paths silently dropped every branded name with an apostrophe or
+    // hyphen - i.e. exactly the chain foods grounding exists to handle. repeatKey and the
+    // substring fallback remain for hand-authored rows.
+    const target = g.match.toLowerCase();
     const matched = entries.filter(
-      (e) => repeatKey(e) === g.match || e.food_name.toLowerCase().includes(g.match.toLowerCase()),
+      (e) => foodKey(e.food_name) === g.match ||
+        repeatKey(e) === g.match ||
+        e.food_name.toLowerCase().includes(target),
     );
     if (matched.length === 0) continue;
     covered += matched.length;

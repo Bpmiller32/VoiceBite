@@ -37,9 +37,18 @@ const TARGETS: FieldSpec[] = [
   { key: "water_ml", label: "Water", unit: "ml", max: 10000 },
 ];
 
+// Upper limits, not targets to reach - the charts flag a day that goes over. These are
+// editable here for a reason: they drive the red over-limit thresholds in every chart, and
+// leaving them off the form meant they couldn't be changed AND were silently reset to the
+// FDA defaults on every save (the form rebuilt its payload without them).
+const LIMITS: FieldSpec[] = [
+  { key: "sodium_mg", label: "Sodium", unit: "mg", max: 20000 },
+  { key: "sugar_g", label: "Sugar", unit: "g", max: 1000 },
+];
+
 const WEIGHT_UNITS: WeightUnit[] = ["lb", "kg"];
 
-const ALL_FIELDS = TARGETS;
+const ALL_FIELDS = [...TARGETS, ...LIMITS];
 
 type FormValues = Record<GoalKey, string>;
 
@@ -56,7 +65,12 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Each optional target owns its own error so a message renders under the field it belongs
+  // to. These used to share one `weightError`, so a bad sleep or distance value showed its
+  // error under "Goal weight" and marked the wrong input invalid (including for a screen reader).
   const [weightError, setWeightError] = useState<string | null>(null);
+  const [sleepError, setSleepError] = useState<string | null>(null);
+  const [distanceError, setDistanceError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   // null (explicitly cleared) and undefined (never set) both render as an empty field.
   // Declared before the state below, which calls it from its initializer on first render.
@@ -104,7 +118,11 @@ export default function Settings() {
     event.preventDefault();
     if (saving) return;
 
-    const next = { weight_unit: weightUnit, distance_unit: distanceUnit } as Goals;
+    // Seed from the currently stored goals so any field this form doesn't edit survives the
+    // round-trip. Rebuilding `next` from scratch used to drop them, and saveGoals then
+    // re-filled the gaps from DEFAULT_GOALS - which is how saving any goal silently reset a
+    // customised sodium or sugar limit back to the FDA default.
+    const next = { ...getGoals(), weight_unit: weightUnit, distance_unit: distanceUnit } as Goals;
     const found: Partial<Record<GoalKey, string>> = {};
 
     for (const field of ALL_FIELDS) {
@@ -143,24 +161,35 @@ export default function Settings() {
         next.weight_target = Math.round(t * 10) / 10;
       }
     }
-    // Both optional: blank clears the target, any other non-number is an error.
-    for (const [raw, key, max] of [[sleepTarget, "sleep_target", 24], [distanceTarget, "distance_target", 200]] as const) {
-      const t = raw.trim();
-      if (t === "") {
-        (next as any)[key] = null;
-        continue;
-      }
-      const n = Number(t);
-      if (!Number.isFinite(n) || n <= 0 || n > max) {
-        weightProblem = weightProblem ?? `${key === "sleep_target" ? "Sleep" : "Distance"} goal needs a number up to ${max}, or leave it blank`;
-      } else {
-        (next as any)[key] = Math.round(n * 100) / 100;
-      }
-    }
     setWeightError(weightProblem);
 
+    // Sleep and distance are also optional (blank clears the target), but each renders its
+    // error under its OWN field. They used to share `weightProblem`, so a bad sleep value
+    // showed its message under "Goal weight" and flagged the wrong input, screen reader included.
+    let sleepProblem: string | null = null;
+    const sleepRaw = sleepTarget.trim();
+    if (sleepRaw === "") {
+      next.sleep_target = null;
+    } else {
+      const n = Number(sleepRaw);
+      if (!Number.isFinite(n) || n <= 0 || n > 24) sleepProblem = "needs a number up to 24, or leave it blank";
+      else next.sleep_target = Math.round(n * 100) / 100;
+    }
+    setSleepError(sleepProblem);
+
+    let distanceProblem: string | null = null;
+    const distanceRaw = distanceTarget.trim();
+    if (distanceRaw === "") {
+      next.distance_target = null;
+    } else {
+      const n = Number(distanceRaw);
+      if (!Number.isFinite(n) || n <= 0 || n > 200) distanceProblem = "needs a number up to 200, or leave it blank";
+      else next.distance_target = Math.round(n * 100) / 100;
+    }
+    setDistanceError(distanceProblem);
+
     setErrors(found);
-    if (Object.keys(found).length > 0 || weightProblem) {
+    if (Object.keys(found).length > 0 || weightProblem || sleepProblem || distanceProblem) {
       setSaved(false);
       return;
     }
@@ -248,6 +277,23 @@ export default function Settings() {
           </div>
 
           <div className="stack-sm">
+            <span className="h3">Limits</span>
+            <span className="small muted">Numbers to stay under. A day that goes over is flagged in the charts.</span>
+          </div>
+
+          <div className="grid-3">
+            {LIMITS.map((field) => (
+              <GoalField
+                key={field.key}
+                field={field}
+                value={form[field.key]}
+                error={errors[field.key]}
+                onChange={update}
+              />
+            ))}
+          </div>
+
+          <div className="stack-sm">
             <span className="h3">Daily numbers</span>
             <span className="small muted">
               Weight, distance walked and sleep. Leave a goal blank to track it without
@@ -267,10 +313,10 @@ export default function Settings() {
                 min="0"
                 placeholder="optional"
                 value={weightTarget}
-                onChange={(e) => { setWeightTarget(e.target.value); setDirty(true); setSaved(false); }}
+                onChange={(e) => { setWeightTarget(e.target.value); setDirty(true); setSaved(false); setWeightError(null); }}
                 aria-invalid={weightError ? true : undefined}
               />
-              <span className="small muted">{weightError ?? weightUnit}</span>
+              <span className="small muted">{weightError ? `↑ ${weightError}` : weightUnit}</span>
             </label>
 
             <label className="field">
@@ -292,20 +338,22 @@ export default function Settings() {
                 className="input num" type="number" inputMode="decimal" step="0.5" min="0" max="24"
                 placeholder="optional"
                 value={sleepTarget}
-                onChange={(e) => { setSleepTarget(e.target.value); setDirty(true); setSaved(false); }}
+                onChange={(e) => { setSleepTarget(e.target.value); setDirty(true); setSaved(false); setSleepError(null); }}
+                aria-invalid={sleepError ? true : undefined}
               />
-              <span className="small muted">hours</span>
+              <span className="small muted">{sleepError ? `↑ ${sleepError}` : "hours"}</span>
             </label>
 
             <label className="field">
               <span className="label">Distance goal</span>
               <input
-                className="input num" type="number" inputMode="decimal" step="0.1" min="0"
+                className="input num" type="number" inputMode="decimal" step="0.1" min="0" max="200"
                 placeholder="optional"
                 value={distanceTarget}
-                onChange={(e) => { setDistanceTarget(e.target.value); setDirty(true); setSaved(false); }}
+                onChange={(e) => { setDistanceTarget(e.target.value); setDirty(true); setSaved(false); setDistanceError(null); }}
+                aria-invalid={distanceError ? true : undefined}
               />
-              <span className="small muted">{distanceUnit} per day</span>
+              <span className="small muted">{distanceError ? `↑ ${distanceError}` : `${distanceUnit} per day`}</span>
             </label>
 
             <label className="field">
